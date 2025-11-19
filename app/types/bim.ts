@@ -89,22 +89,29 @@ export interface GridSettings {
   divisions: number;
 }
 
+export interface WallType {
+  name: string;
+  thickness: number; // feet
+  description: string;
+}
+
 export interface WallSettings {
-  defaultHeight: number; // meters
-  defaultThickness: number; // meters
+  defaultHeight: number; // feet
+  defaultThickness: number; // feet
   minHeight: number;
   maxHeight: number;
   minThickness: number;
   maxThickness: number;
+  types: WallType[];
 }
 
 export interface DoorSettings {
-  defaultWidth: number; // meters
-  defaultHeight: number; // meters
+  defaultWidth: number; // feet
+  defaultHeight: number; // feet
   presets: {
     name: string;
-    width: number; // meters (e.g., 0.914 for 36")
-    height: number;
+    width: number; // feet
+    height: number; // feet
   }[];
 }
 
@@ -112,35 +119,40 @@ export interface EditorSettings {
   grid: GridSettings;
   wall: WallSettings;
   door: DoorSettings;
-  snapThreshold: number; // Distance threshold for snapping in meters
+  snapThreshold: number; // feet
 }
 
-// Default settings
+// Default settings (Imperial Units: 1 unit = 1 foot)
 export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   grid: {
     enabled: true,
-    size: 0.1, // 100mm grid
-    divisions: 100,
+    size: 1.0, // 1 foot grid
+    divisions: 12, // 1 inch subdivisions
   },
   wall: {
-    defaultHeight: 3.0, // 3 meters
-    defaultThickness: 0.2, // 200mm
-    minHeight: 2.0,
-    maxHeight: 6.0,
-    minThickness: 0.1,
-    maxThickness: 0.5,
-  },
-  door: {
-    defaultWidth: 0.914, // 36 inches
-    defaultHeight: 2.032, // 80 inches
-    presets: [
-      { name: "36\" Standard", width: 0.914, height: 2.032 },
-      { name: "32\" Standard", width: 0.813, height: 2.032 },
-      { name: "30\" Standard", width: 0.762, height: 2.032 },
-      { name: "48\" Double", width: 1.219, height: 2.032 },
+    defaultHeight: 9.0, // 9 feet
+    defaultThickness: 4.5 / 12, // 4.5 inches (Interior)
+    minHeight: 4.0,
+    maxHeight: 20.0,
+    minThickness: 2.0 / 12,
+    maxThickness: 12.0 / 12,
+    types: [
+      { name: 'Interior (4.5")', thickness: 4.5 / 12, description: 'Standard 2x4 interior wall' },
+      { name: 'Exterior (6.5")', thickness: 6.5 / 12, description: 'Standard 2x6 exterior wall' },
     ],
   },
-  snapThreshold: 0.2, // 200mm snap distance
+  door: {
+    defaultWidth: 3.0, // 36 inches
+    defaultHeight: 6 + 8 / 12, // 6'8" (80 inches)
+    presets: [
+      { name: '30" x 80"', width: 2.5, height: 6.667 },
+      { name: '32" x 80"', width: 2.667, height: 6.667 },
+      { name: '36" x 80"', width: 3.0, height: 6.667 },
+      { name: '48" x 80" Double', width: 4.0, height: 6.667 },
+      { name: '60" x 80" Double', width: 5.0, height: 6.667 },
+    ],
+  },
+  snapThreshold: 0.5, // 6 inches snap threshold for close points
 };
 
 // Utility type guards
