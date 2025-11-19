@@ -15,6 +15,7 @@ import {
   EdgesGeometry,
   LineSegments,
   Plane,
+  Matrix4,
 } from 'three';
 import { useThreeScene } from '../hooks/useThreeScene';
 import { useManifold } from '../hooks/useManifold';
@@ -70,6 +71,11 @@ export default function BIMCanvas({
   // Wall creation state
   const [wallStartPoint, setWallStartPoint] = useState<Vector3 | null>(null);
   const [wallPreviewLine, setWallPreviewLine] = useState<Line | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const mouseDownPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Door preview state
+  const [doorPreviewMesh, setDoorPreviewMesh] = useState<ThreeMesh | null>(null);
 
   // Raycaster
   const raycasterRef = useRef(new Raycaster());
@@ -194,29 +200,30 @@ export default function BIMCanvas({
         let wallGeometry = wallMesh.geometry.clone();
 
         for (const door of wallDoors) {
-          const doorGeometry = new BoxGeometry(
-            door.geometry.dimensions.width,
-            door.geometry.dimensions.height,
-            wall.thickness * 1.2 // Slightly thicker to ensure clean cut
+          // Create door opening geometry (slightly smaller than door for frame)
+          const openingWidth = door.geometry.dimensions.width * 0.95;
+          const openingHeight = door.geometry.dimensions.height * 0.98;
+          const openingGeometry = new BoxGeometry(
+            openingWidth,
+            openingHeight,
+            wall.thickness * 1.5 // Thicker to ensure clean cut
           );
 
-          // Position door geometry relative to wall
-          const doorMesh = new ThreeMesh(doorGeometry);
+          // Position door opening geometry in world space
           const doorPos = tupleToVec3(door.geometry.position);
-          doorMesh.position.copy(doorPos.clone().sub(wallMesh.position));
-          doorMesh.rotation.copy(wallMesh.rotation);
-          doorMesh.updateMatrix();
-          doorGeometry.applyMatrix4(doorMesh.matrix);
+          const openingMatrix = new Matrix4();
+          openingMatrix.makeTranslation(doorPos.x, doorPos.y, doorPos.z);
+          openingGeometry.applyMatrix4(openingMatrix);
 
           // Perform boolean subtraction
-          const resultGeometry = performBoolean(wallGeometry, doorGeometry, 'difference');
+          const resultGeometry = performBoolean(wallGeometry, openingGeometry, 'difference');
 
           if (resultGeometry) {
             wallGeometry.dispose();
             wallGeometry = resultGeometry;
           }
 
-          doorGeometry.dispose();
+          openingGeometry.dispose();
         }
 
         wallMesh.geometry.dispose();
@@ -233,7 +240,22 @@ export default function BIMCanvas({
 
       scene.add(wallMesh);
     });
-  }, [scene, walls, doors, manifoldLoaded, performBoolean, createWallMesh, selectedElementId]);
+
+    // Create actual door meshes
+    doors.forEach((door) => {
+      const doorMesh = createDoorMesh(door, walls.find(w => w.id === door.parentWallId)!);
+      if (doorMesh) {
+        // Add selection highlight for selected doors
+        if (selectedElementId === door.id) {
+          const edges = new EdgesGeometry(doorMesh.geometry);
+          const lineMaterial = new LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
+          const wireframe = new LineSegments(edges, lineMaterial);
+          doorMesh.add(wireframe);
+        }
+        scene.add(doorMesh);
+      }
+    });
+  }, [scene, walls, doors, manifoldLoaded, performBoolean, createWallMesh, createDoorMesh, selectedElementId]);
 
   // Update scene when model changes
   useEffect(() => {
@@ -242,10 +264,36 @@ export default function BIMCanvas({
     }
   }, [isReady, manifoldLoaded, walls, doors, rebuildScene, selectedElementId]);
 
+  // Handle mouse down to track dragging
+  const handleCanvasMouseDown = useCallback((event: MouseEvent) => {
+    mouseDownPosRef.current = { x: event.clientX, y: event.clientY };
+    setIsDragging(false);
+  }, []);
+
+  // Handle mouse move to detect dragging
+  const handleCanvasMouseMoveForDrag = useCallback((event: MouseEvent) => {
+    if (mouseDownPosRef.current) {
+      const dx = event.clientX - mouseDownPosRef.current.x;
+      const dy = event.clientY - mouseDownPosRef.current.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance > 5) {
+        // More than 5px movement = dragging
+        setIsDragging(true);
+      }
+    }
+  }, []);
+
   // Handle mouse click
   const handleCanvasClick = useCallback(
     (event: MouseEvent) => {
       if (!scene || !camera) return;
+
+      // If user was dragging (panning/zooming), don't process click
+      if (isDragging) {
+        setIsDragging(false);
+        mouseDownPosRef.current = null;
+        return;
+      }
 
       if (toolMode === 'wall') {
         const point = getGroundIntersection(event);
@@ -417,48 +465,139 @@ export default function BIMCanvas({
       wallThickness,
       doorWidth,
       doorHeight,
+      isDragging,
     ]
   );
 
-  // Handle mouse move for wall preview
+  // Handle mouse move for wall preview and door preview
   const handleCanvasMouseMove = useCallback(
     (event: MouseEvent) => {
-      if (!scene || !camera || toolMode !== 'wall' || !wallStartPoint) return;
+      // Track dragging
+      handleCanvasMouseMoveForDrag(event);
 
-      const point = getGroundIntersection(event);
-      if (!point) return;
+      if (!scene || !camera) return;
 
-      const snappedPoint = snapToGrid(point);
+      // Wall preview
+      if (toolMode === 'wall' && wallStartPoint) {
+        const point = getGroundIntersection(event);
+        if (!point) return;
 
-      // Update preview line
-      if (wallPreviewLine) {
-        scene.remove(wallPreviewLine);
+        const snappedPoint = snapToGrid(point);
+
+        // Update preview line
+        if (wallPreviewLine) {
+          scene.remove(wallPreviewLine);
+        }
+
+        const points = [wallStartPoint, snappedPoint];
+        const geometry = new BufferGeometry().setFromPoints(points);
+        const material = new LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
+        const line = new Line(geometry, material);
+
+        scene.add(line);
+        setWallPreviewLine(line);
       }
 
-      const points = [wallStartPoint, snappedPoint];
-      const geometry = new BufferGeometry().setFromPoints(points);
-      const material = new LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
-      const line = new Line(geometry, material);
+      // Door preview
+      if (toolMode === 'door') {
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (!rect) return;
 
-      scene.add(line);
-      setWallPreviewLine(line);
+        mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycasterRef.current.setFromCamera(mouseRef.current, camera);
+
+        const wallMeshes: ThreeMesh[] = [];
+        scene.traverse((object) => {
+          if (object.userData.elementType === 'wall' && object instanceof ThreeMesh) {
+            wallMeshes.push(object);
+          }
+        });
+
+        const intersects = raycasterRef.current.intersectObjects(wallMeshes, false);
+
+        if (intersects.length > 0) {
+          const intersection = intersects[0];
+          const point = intersection.point;
+          const normal = intersection.face?.normal.clone();
+
+          if (normal) {
+            // Transform normal to world space
+            normal.transformDirection(intersection.object.matrixWorld);
+
+            // Remove old preview
+            if (doorPreviewMesh) {
+              scene.remove(doorPreviewMesh);
+            }
+
+            // Create door preview mesh
+            const previewGeometry = new BoxGeometry(doorWidth, doorHeight, wallThickness);
+            const previewMaterial = new MeshLambertMaterial({
+              color: 0x8B4513,
+              transparent: true,
+              opacity: 0.6,
+            });
+            const preview = new ThreeMesh(previewGeometry, previewMaterial);
+
+            // Position at intersection point
+            preview.position.copy(point);
+            preview.position.y = doorHeight / 2;
+            preview.rotation.y = Math.atan2(normal.z, normal.x);
+
+            scene.add(preview);
+            setDoorPreviewMesh(preview);
+          }
+        } else {
+          // No wall hit - remove preview
+          if (doorPreviewMesh) {
+            scene.remove(doorPreviewMesh);
+            setDoorPreviewMesh(null);
+          }
+        }
+      } else {
+        // Not in door mode - remove preview
+        if (doorPreviewMesh) {
+          scene.remove(doorPreviewMesh);
+          setDoorPreviewMesh(null);
+        }
+      }
     },
-    [scene, camera, toolMode, wallStartPoint, wallPreviewLine, snapToGrid, getGroundIntersection]
+    [scene, camera, toolMode, wallStartPoint, wallPreviewLine, snapToGrid, getGroundIntersection, doorPreviewMesh, doorWidth, doorHeight, wallThickness, handleCanvasMouseMoveForDrag]
   );
+
+  // Handle escape key to cancel wall placement
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && wallStartPoint && scene) {
+        // Cancel wall placement
+        setWallStartPoint(null);
+        if (wallPreviewLine) {
+          scene.remove(wallPreviewLine);
+          setWallPreviewLine(null);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [wallStartPoint, wallPreviewLine, scene]);
 
   // Attach event listeners
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    canvas.addEventListener('mousedown', handleCanvasMouseDown);
     canvas.addEventListener('click', handleCanvasClick);
     canvas.addEventListener('mousemove', handleCanvasMouseMove);
 
     return () => {
+      canvas.removeEventListener('mousedown', handleCanvasMouseDown);
       canvas.removeEventListener('click', handleCanvasClick);
       canvas.removeEventListener('mousemove', handleCanvasMouseMove);
     };
-  }, [handleCanvasClick, handleCanvasMouseMove]);
+  }, [handleCanvasMouseDown, handleCanvasClick, handleCanvasMouseMove]);
 
   return (
     <div className="relative w-full h-full">
