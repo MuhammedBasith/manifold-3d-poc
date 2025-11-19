@@ -37,28 +37,28 @@ export function createDoorGeometries(
     width: number,
     height: number,
     depth: number, // Wall thickness (frame depth)
-    frameWidth: number = 0.1 // Width of the frame face
+    frameWidth: number = 2 / 12 // Width of the frame face (2 inches)
 ): DoorGeometries {
     // 1. Frame
     // The frame goes around the top and sides.
     // We can create it by subtracting the inner opening from the outer block,
     // but since we might not have Manifold here, we'll construct it from 3 boxes.
 
-    const frameThickness = 0.05; // How much it sticks out from the wall
+    const frameThickness = 1 / 12; // How much it sticks out from the wall (1 inch)
     const actualFrameDepth = depth + (frameThickness * 2); // Frame is thicker than wall
 
     // Top piece
     const topGeo = new BoxGeometry(width, frameWidth, actualFrameDepth);
-    topGeo.translate(0, (height / 2) - (frameWidth / 2), 0);
+    topGeo.translate(0, height - (frameWidth / 2), 0);
 
     // Left piece
     const sideHeight = height - frameWidth;
     const leftGeo = new BoxGeometry(frameWidth, sideHeight, actualFrameDepth);
-    leftGeo.translate(-(width / 2) + (frameWidth / 2), -frameWidth / 2, 0);
+    leftGeo.translate(-(width / 2) + (frameWidth / 2), (height - frameWidth) / 2, 0);
 
     // Right piece
     const rightGeo = new BoxGeometry(frameWidth, sideHeight, actualFrameDepth);
-    rightGeo.translate((width / 2) - (frameWidth / 2), -frameWidth / 2, 0);
+    rightGeo.translate((width / 2) - (frameWidth / 2), (height - frameWidth) / 2, 0);
 
     // Merge frame parts (using simple geometry merging for display)
     // Note: In a real app we might want to keep them separate or use CSG, 
@@ -69,40 +69,19 @@ export function createDoorGeometries(
     // Fits inside the frame
     const panelWidth = width - (frameWidth * 2);
     const panelHeight = height - frameWidth; // No frame at bottom
-    const panelDepth = 0.05; // 50mm door panel
-
-    const panelGeo = new BoxGeometry(panelWidth, panelHeight, panelDepth);
-    // Position: centered horizontally, but needs to be moved down to align with bottom of frame
-    // The frame's center is at 0,0,0 (relative to the door's center point which is usually bottom-center or center-center).
-    // Let's assume the input 'height' is total height.
-    // If the door mesh origin is at the bottom-center:
-    // Frame top is at y=height.
-
-    // Let's standardize: Origin is at the BOTTOM-CENTER of the door.
-
-    // Re-create Frame with Bottom-Center origin
-    const frameTop = new BoxGeometry(width, frameWidth, actualFrameDepth);
-    frameTop.translate(0, height - (frameWidth / 2), 0);
-
-    const frameLeft = new BoxGeometry(frameWidth, height - frameWidth, actualFrameDepth);
-    frameLeft.translate(-(width / 2) + (frameWidth / 2), (height - frameWidth) / 2, 0);
-
-    const frameRight = new BoxGeometry(frameWidth, height - frameWidth, actualFrameDepth);
-    frameRight.translate((width / 2) - (frameWidth / 2), (height - frameWidth) / 2, 0);
-
-    const finalFrameGeo = mergeGeometries([frameTop, frameLeft, frameRight]);
+    const panelDepth = 1.5 / 12; // 1.5 inches door panel
 
     // Re-create Panel with Bottom-Center origin
     const finalPanelGeo = new BoxGeometry(panelWidth, panelHeight, panelDepth);
     finalPanelGeo.translate(0, panelHeight / 2, 0);
 
     // 3. Handle
-    const handleGeo = new BoxGeometry(0.05, 0.15, 0.05); // Simple handle
-    // Position: Right side, ~1m up
-    handleGeo.translate((panelWidth / 2) - 0.1, 1.0, panelDepth / 2 + 0.025);
+    const handleGeo = new BoxGeometry(2 / 12, 6 / 12, 2 / 12); // Simple handle (2x6x2 inches)
+    // Position: Right side, ~36 inches up (3 ft)
+    handleGeo.translate((panelWidth / 2) - (4 / 12), 3.0, panelDepth / 2 + (1 / 12));
 
     return {
-        frame: finalFrameGeo,
+        frame: frameGeo,
         panel: finalPanelGeo,
         handle: handleGeo
     };
