@@ -1,4 +1,4 @@
-import ManifoldShowcaseLoader from "./components/ManifoldShowcaseLoader";
+import Link from 'next/link';
 
 export default function Home() {
   return (
@@ -6,15 +6,74 @@ export default function Home() {
       <main className="container mx-auto px-4 py-12 max-w-6xl">
         <div className="text-center mb-12">
           <h1 className="text-5xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 mb-4">
-            Manifold-3D Showcase
+            Manifold-3D Projects
           </h1>
           <p className="text-xl text-zinc-600 dark:text-zinc-400 max-w-2xl mx-auto">
-            Explore the power of high-performance 3D boolean operations and geometric manipulations
-            powered by WebAssembly
+            Explore interactive 3D demonstrations powered by Manifold-3D and WebAssembly
           </p>
         </div>
 
-        <ManifoldShowcaseLoader />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto mb-16">
+          <Link
+            href="/manifold-showcase"
+            className="group relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 p-8 text-white transition-transform hover:scale-105 hover:shadow-2xl"
+          >
+            <div className="relative z-10">
+              <h2 className="text-3xl font-bold mb-4">Manifold Showcase</h2>
+              <p className="text-blue-50 mb-6">
+                Explore boolean operations like union, difference, intersection, and convex hull
+                with interactive 3D controls
+              </p>
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <span>View Demo</span>
+                <svg
+                  className="w-5 h-5 transition-transform group-hover:translate-x-1"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13 7l5 5m0 0l-5 5m5-5H6"
+                  />
+                </svg>
+              </div>
+            </div>
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-600 to-purple-700 opacity-0 transition-opacity group-hover:opacity-100" />
+          </Link>
+
+          <Link
+            href="/bim-editor"
+            className="group relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 p-8 text-white transition-transform hover:scale-105 hover:shadow-2xl"
+          >
+            <div className="relative z-10">
+              <h2 className="text-3xl font-bold mb-4">BIM Editor</h2>
+              <p className="text-emerald-50 mb-6">
+                Create and edit building models with walls, doors, and windows. Features raycasting,
+                snapping, and real-time boolean operations
+              </p>
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <span>Start Building</span>
+                <svg
+                  className="w-5 h-5 transition-transform group-hover:translate-x-1"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13 7l5 5m0 0l-5 5m5-5H6"
+                  />
+                </svg>
+              </div>
+            </div>
+            <div className="absolute inset-0 bg-gradient-to-br from-emerald-600 to-teal-700 opacity-0 transition-opacity group-hover:opacity-100" />
+          </Link>
+        </div>
 
         <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
           <div className="bg-white dark:bg-zinc-800 p-6 rounded-lg shadow-md">
