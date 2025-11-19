@@ -86,7 +86,7 @@ export default function BIMProperties({
                 <>
                   <div>
                     <label className="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                      Height (m)
+                      Height (ft)
                     </label>
                     <input
                       type="number"
@@ -102,15 +102,15 @@ export default function BIMProperties({
                           },
                         })
                       }
-                      min={2}
-                      max={6}
-                      step={0.1}
+                      min={4}
+                      max={20}
+                      step={0.5}
                       className="w-full px-2 py-1 text-sm bg-white dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
                     />
                   </div>
                   <div>
                     <label className="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                      Thickness (m)
+                      Thickness (ft)
                     </label>
                     <input
                       type="number"
@@ -121,8 +121,8 @@ export default function BIMProperties({
                         } as Partial<BIMWall>)
                       }
                       min={0.1}
-                      max={0.5}
-                      step={0.05}
+                      max={2.0}
+                      step={1 / 12}
                       className="w-full px-2 py-1 text-sm bg-white dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
                     />
                   </div>
@@ -142,7 +142,7 @@ export default function BIMProperties({
                 <>
                   <div>
                     <label className="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                      Width (m)
+                      Width (ft)
                     </label>
                     <input
                       type="number"
@@ -158,15 +158,15 @@ export default function BIMProperties({
                           },
                         })
                       }
-                      min={0.5}
-                      max={2}
-                      step={0.05}
+                      min={1.5}
+                      max={10}
+                      step={1 / 12}
                       className="w-full px-2 py-1 text-sm bg-white dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
                     />
                   </div>
                   <div>
                     <label className="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                      Height (m)
+                      Height (ft)
                     </label>
                     <input
                       type="number"
@@ -182,9 +182,9 @@ export default function BIMProperties({
                           },
                         })
                       }
-                      min={1.8}
-                      max={3}
-                      step={0.1}
+                      min={6}
+                      max={12}
+                      step={1 / 12}
                       className="w-full px-2 py-1 text-sm bg-white dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
                     />
                   </div>
@@ -202,24 +202,24 @@ export default function BIMProperties({
               {/* Position */}
               <div>
                 <label className="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                  Position (x, y, z)
+                  Position (x, y, z) [ft]
                 </label>
                 <div className="grid grid-cols-3 gap-1">
                   <input
                     type="number"
-                    value={selectedElement.geometry.position.x.toFixed(2)}
+                    value={selectedElement.geometry.position.x.toFixed(3)}
                     disabled
                     className="px-1 py-1 text-xs bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
                   />
                   <input
                     type="number"
-                    value={selectedElement.geometry.position.y.toFixed(2)}
+                    value={selectedElement.geometry.position.y.toFixed(3)}
                     disabled
                     className="px-1 py-1 text-xs bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
                   />
                   <input
                     type="number"
-                    value={selectedElement.geometry.position.z.toFixed(2)}
+                    value={selectedElement.geometry.position.z.toFixed(3)}
                     disabled
                     className="px-1 py-1 text-xs bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
                   />
