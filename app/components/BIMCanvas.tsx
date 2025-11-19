@@ -75,7 +75,7 @@ export default function BIMCanvas({
 
   // Wall creation state
   const [wallStartPoint, setWallStartPoint] = useState<Vector3 | null>(null);
-  const [wallPreviewLine, setWallPreviewLine] = useState<Line | null>(null);
+  const wallPreviewMeshRef = useRef<Object3D | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const mouseDownPosRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -99,6 +99,32 @@ export default function BIMCanvas({
       );
     },
     [gridEnabled]
+  );
+
+  // Snap to wall endpoints
+  const snapToWallEndpoints = useCallback(
+    (position: Vector3): Vector3 => {
+      const snapThreshold = 1.0; // 1 foot snap radius
+      let closestPoint = position.clone();
+      let minDistance = snapThreshold;
+
+      walls.forEach((wall) => {
+        const start = tupleToVec3(wall.start);
+        const end = tupleToVec3(wall.end);
+
+        if (position.distanceTo(start) < minDistance) {
+          minDistance = position.distanceTo(start);
+          closestPoint = start;
+        }
+        if (position.distanceTo(end) < minDistance) {
+          minDistance = position.distanceTo(end);
+          closestPoint = end;
+        }
+      });
+
+      return closestPoint;
+    },
+    [walls]
   );
 
   // Get mouse position in 3D space (on ground plane)
@@ -390,7 +416,13 @@ export default function BIMCanvas({
         const point = getGroundIntersection(event);
         if (!point) return;
 
-        const snappedPoint = snapToGrid(point);
+        // Priority: Endpoint Snap > Grid Snap
+        let snappedPoint = snapToWallEndpoints(point);
+
+        // If no endpoint snap happened (point didn't change), try grid snap
+        if (snappedPoint.equals(point)) {
+          snappedPoint = snapToGrid(point);
+        }
 
         if (!wallStartPoint) {
           // First click - set start point
@@ -403,9 +435,9 @@ export default function BIMCanvas({
           // Don't create zero-length walls
           if (start.distanceTo(end) < 0.01) {
             setWallStartPoint(null);
-            if (wallPreviewLine) {
-              scene.remove(wallPreviewLine);
-              setWallPreviewLine(null);
+            if (wallPreviewMeshRef.current) {
+              scene.remove(wallPreviewMeshRef.current);
+              wallPreviewMeshRef.current = null;
             }
             return;
           }
@@ -427,9 +459,9 @@ export default function BIMCanvas({
           });
 
           setWallStartPoint(null);
-          if (wallPreviewLine) {
-            scene.remove(wallPreviewLine);
-            setWallPreviewLine(null);
+          if (wallPreviewMeshRef.current) {
+            scene.remove(wallPreviewMeshRef.current);
+            wallPreviewMeshRef.current = null;
           }
         }
       } else if (toolMode === 'door') {
@@ -589,7 +621,6 @@ export default function BIMCanvas({
       camera,
       toolMode,
       wallStartPoint,
-      wallPreviewLine,
       snapToGrid,
       getGroundIntersection,
       onWallCreate,
@@ -603,7 +634,8 @@ export default function BIMCanvas({
       doorHeight,
       isDragging,
       gridEnabled,
-      updateDoorPreview
+      updateDoorPreview,
+      snapToWallEndpoints
     ]
   );
 
@@ -620,20 +652,47 @@ export default function BIMCanvas({
         const point = getGroundIntersection(event);
         if (!point) return;
 
-        const snappedPoint = snapToGrid(point);
+        // Priority: Endpoint Snap > Grid Snap
+        let targetPoint = snapToWallEndpoints(point);
 
-        // Update preview line
-        if (wallPreviewLine) {
-          scene.remove(wallPreviewLine);
+        // If no endpoint snap happened (point didn't change), try grid snap
+        if (targetPoint.equals(point)) {
+          targetPoint = snapToGrid(point);
         }
 
-        const points = [wallStartPoint, snappedPoint];
-        const geometry = new BufferGeometry().setFromPoints(points);
-        const material = new LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
-        const line = new Line(geometry, material);
+        // Update preview mesh
+        if (wallPreviewMeshRef.current) {
+          scene.remove(wallPreviewMeshRef.current);
+          wallPreviewMeshRef.current = null;
+        }
 
-        scene.add(line);
-        setWallPreviewLine(line);
+        // Create ghost mesh
+        const start = wallStartPoint;
+        const end = targetPoint;
+        const direction = new Vector3().subVectors(end, start);
+        const length = direction.length();
+
+        if (length > 0.1) {
+          const geometry = createWallGeometry(length, wallHeight, wallThickness);
+          const material = new MeshLambertMaterial({
+            color: 0x00ff00,
+            transparent: true,
+            opacity: 0.5
+          });
+          const mesh = new ThreeMesh(geometry, material);
+
+          // Position at midpoint
+          const midpoint = new Vector3().addVectors(start, end).multiplyScalar(0.5);
+          midpoint.y = wallHeight / 2;
+          mesh.position.copy(midpoint);
+
+          // Rotate
+          const angle = Math.atan2(direction.z, direction.x);
+          mesh.rotation.y = -angle;
+
+          scene.add(mesh);
+          wallPreviewMeshRef.current = mesh;
+        }
       }
 
       // Door preview
@@ -708,7 +767,7 @@ export default function BIMCanvas({
         updateDoorPreview(false);
       }
     },
-    [scene, camera, toolMode, wallStartPoint, wallPreviewLine, snapToGrid, getGroundIntersection, doorWidth, doorHeight, wallThickness, handleCanvasMouseMoveForDrag, walls, gridEnabled, updateDoorPreview]
+    [scene, camera, toolMode, wallStartPoint, snapToGrid, getGroundIntersection, doorWidth, doorHeight, wallThickness, handleCanvasMouseMoveForDrag, walls, gridEnabled, updateDoorPreview, snapToWallEndpoints, wallHeight]
   );
 
   // Handle escape key to cancel wall placement
@@ -717,9 +776,9 @@ export default function BIMCanvas({
       if (e.key === 'Escape' && wallStartPoint && scene) {
         // Cancel wall placement
         setWallStartPoint(null);
-        if (wallPreviewLine) {
-          scene.remove(wallPreviewLine);
-          setWallPreviewLine(null);
+        if (wallPreviewMeshRef.current) {
+          scene.remove(wallPreviewMeshRef.current);
+          wallPreviewMeshRef.current = null;
         }
       }
       // Also cancel door preview if in door mode
@@ -730,7 +789,7 @@ export default function BIMCanvas({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [wallStartPoint, wallPreviewLine, scene, toolMode, updateDoorPreview]);
+  }, [wallStartPoint, scene, toolMode, updateDoorPreview]);
 
   // Attach event listeners
   useEffect(() => {
@@ -747,6 +806,17 @@ export default function BIMCanvas({
       canvas.removeEventListener('mousemove', handleCanvasMouseMove);
     };
   }, [handleCanvasMouseDown, handleCanvasClick, handleCanvasMouseMove]);
+
+  // Reset wall creation state when tool mode changes
+  useEffect(() => {
+    if (toolMode !== 'wall') {
+      setWallStartPoint(null);
+      if (wallPreviewMeshRef.current && scene) {
+        scene.remove(wallPreviewMeshRef.current);
+        wallPreviewMeshRef.current = null;
+      }
+    }
+  }, [toolMode, scene]);
 
   return (
     <div className="relative w-full h-full">
