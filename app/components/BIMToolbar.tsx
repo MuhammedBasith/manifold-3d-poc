@@ -61,11 +61,10 @@ export default function BIMToolbar({
             <button
               key={tool.mode}
               onClick={() => onToolChange(tool.mode)}
-              className={`flex flex-col items-center justify-center w-16 h-16 rounded-lg font-semibold transition-all ${
-                toolMode === tool.mode
+              className={`flex flex-col items-center justify-center w-16 h-16 rounded-lg font-semibold transition-all ${toolMode === tool.mode
                   ? `${tool.color} text-white shadow-lg scale-105`
                   : 'bg-zinc-100 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-600'
-              }`}
+                }`}
               title={tool.label}
             >
               <span className="text-2xl">{tool.icon}</span>
@@ -81,7 +80,23 @@ export default function BIMToolbar({
           <div className="flex gap-4">
             <div className="flex flex-col">
               <label className="text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                Height (m)
+                Type
+              </label>
+              <select
+                value={wallThickness}
+                onChange={(e) => onWallThicknessChange(parseFloat(e.target.value))}
+                className="px-2 py-1 text-sm bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
+              >
+                {DEFAULT_EDITOR_SETTINGS.wall.types.map((type) => (
+                  <option key={type.name} value={type.thickness}>
+                    {type.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col">
+              <label className="text-xs text-zinc-600 dark:text-zinc-400 mb-1">
+                Height (ft)
               </label>
               <input
                 type="number"
@@ -89,21 +104,7 @@ export default function BIMToolbar({
                 onChange={(e) => onWallHeightChange(parseFloat(e.target.value))}
                 min={DEFAULT_EDITOR_SETTINGS.wall.minHeight}
                 max={DEFAULT_EDITOR_SETTINGS.wall.maxHeight}
-                step={0.1}
-                className="w-20 px-2 py-1 text-sm bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
-              />
-            </div>
-            <div className="flex flex-col">
-              <label className="text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                Thickness (m)
-              </label>
-              <input
-                type="number"
-                value={wallThickness}
-                onChange={(e) => onWallThicknessChange(parseFloat(e.target.value))}
-                min={DEFAULT_EDITOR_SETTINGS.wall.minThickness}
-                max={DEFAULT_EDITOR_SETTINGS.wall.maxThickness}
-                step={0.05}
+                step={0.5}
                 className="w-20 px-2 py-1 text-sm bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
               />
             </div>
@@ -115,33 +116,28 @@ export default function BIMToolbar({
           <div className="flex gap-4">
             <div className="flex flex-col">
               <label className="text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                Width (m)
+                Size
               </label>
               <select
-                value={doorWidth}
-                onChange={(e) => onDoorWidthChange(parseFloat(e.target.value))}
+                value={doorWidth} // We use width as the primary key for now, but ideally should select both
+                onChange={(e) => {
+                  const width = parseFloat(e.target.value);
+                  const preset = DEFAULT_EDITOR_SETTINGS.door.presets.find(p => Math.abs(p.width - width) < 0.01);
+                  if (preset) {
+                    onDoorWidthChange(preset.width);
+                    onDoorHeightChange(preset.height);
+                  } else {
+                    onDoorWidthChange(width);
+                  }
+                }}
                 className="px-2 py-1 text-sm bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
               >
                 {DEFAULT_EDITOR_SETTINGS.door.presets.map((preset) => (
                   <option key={preset.name} value={preset.width}>
-                    {preset.name} ({preset.width.toFixed(3)}m)
+                    {preset.name}
                   </option>
                 ))}
               </select>
-            </div>
-            <div className="flex flex-col">
-              <label className="text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                Height (m)
-              </label>
-              <input
-                type="number"
-                value={doorHeight}
-                onChange={(e) => onDoorHeightChange(parseFloat(e.target.value))}
-                min={1.8}
-                max={3.0}
-                step={0.1}
-                className="w-20 px-2 py-1 text-sm bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded"
-              />
             </div>
           </div>
         )}
@@ -151,11 +147,10 @@ export default function BIMToolbar({
         {/* Grid Toggle */}
         <button
           onClick={onGridToggle}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            gridEnabled
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${gridEnabled
               ? 'bg-green-600 text-white'
               : 'bg-zinc-100 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-600'
-          }`}
+            }`}
         >
           Grid: {gridEnabled ? 'ON' : 'OFF'}
         </button>
