@@ -68,8 +68,8 @@ export default function BIMCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null!);
   const { scene, camera, isReady } = useThreeScene(canvasRef, {
     enableGrid: gridEnabled,
-    gridSize: 10,
-    gridDivisions: 100,
+    gridSize: 100, // 100 feet grid extent
+    gridDivisions: 100, // 1 foot grid lines
   });
   const { isLoaded: manifoldLoaded, performBoolean } = useManifold();
 
@@ -90,11 +90,12 @@ export default function BIMCanvas({
   const snapToGrid = useCallback(
     (position: Vector3): Vector3 => {
       if (!gridEnabled) return position;
-      const gridSize = DEFAULT_EDITOR_SETTINGS.grid.size;
+      // Snap to nearest inch (1/12 foot)
+      const snapIncrement = 1 / 12;
       return new Vector3(
-        Math.round(position.x / gridSize) * gridSize,
-        Math.round(position.y / gridSize) * gridSize,
-        Math.round(position.z / gridSize) * gridSize
+        Math.round(position.x / snapIncrement) * snapIncrement,
+        Math.round(position.y / snapIncrement) * snapIncrement,
+        Math.round(position.z / snapIncrement) * snapIncrement
       );
     },
     [gridEnabled]
