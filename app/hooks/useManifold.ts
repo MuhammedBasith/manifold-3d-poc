@@ -170,13 +170,8 @@ export function useManifold(): UseManifoldReturn {
 
         const resultGeometry = mesh2geometry(resultMesh);
 
-        // Clean up Manifold objects
-        mesh1.delete();
-        mesh2.delete();
-        manifold1.delete();
-        manifold2.delete();
-        result.delete();
-        resultMesh.delete();
+        // Note: Manifold WASM objects are managed by the library
+        // We don't need to manually delete them
 
         return resultGeometry;
       } catch (err) {
