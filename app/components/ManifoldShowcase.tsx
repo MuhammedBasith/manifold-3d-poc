@@ -14,26 +14,28 @@ import {
   AmbientLight,
   BoxGeometry,
   SphereGeometry,
-  CylinderGeometry,
+  Group,
 } from 'three';
+import { OrbitControls } from 'three-stdlib';
 
 type ManifoldModule = any;
 type Manifold = any;
 type Mesh = any;
 
-type BooleanOp = 'union' | 'difference' | 'intersection';
-type AdvancedOp = 'hull' | 'offset' | 'rotate' | 'translate' | 'scale';
+type BooleanOp = 'union' | 'difference' | 'intersection' | 'none';
+type AdvancedOp = 'hull' | 'offset';
 
 interface OperationButton {
   name: string;
   value: BooleanOp | AdvancedOp;
   category: 'boolean' | 'advanced';
+  description: string;
 }
 
 export default function ManifoldShowcase() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [currentOp, setCurrentOp] = useState<BooleanOp>('union');
+  const [currentOp, setCurrentOp] = useState<BooleanOp | AdvancedOp>('none');
   const [error, setError] = useState<string | null>(null);
   const animationFrameRef = useRef<number | undefined>(undefined);
   const sceneRef = useRef<{
@@ -41,6 +43,8 @@ export default function ManifoldShowcase() {
     camera: PerspectiveCamera;
     renderer: WebGLRenderer;
     resultMesh: ThreeMesh;
+    objectsGroup: Group;
+    controls: OrbitControls;
     materials: any[];
     manifoldModule: ManifoldModule;
     Manifold: any;
@@ -49,11 +53,12 @@ export default function ManifoldShowcase() {
   }| undefined>(undefined);
 
   const operations: OperationButton[] = [
-    { name: 'Union', value: 'union', category: 'boolean' },
-    { name: 'Difference', value: 'difference', category: 'boolean' },
-    { name: 'Intersection', value: 'intersection', category: 'boolean' },
-    { name: 'Convex Hull', value: 'hull', category: 'advanced' },
-    { name: 'Offset', value: 'offset', category: 'advanced' },
+    { name: 'Show Both', value: 'none', category: 'boolean', description: 'Display both objects separately' },
+    { name: 'Union', value: 'union', category: 'boolean', description: 'Combine both shapes' },
+    { name: 'Difference', value: 'difference', category: 'boolean', description: 'Subtract sphere from cube' },
+    { name: 'Intersection', value: 'intersection', category: 'boolean', description: 'Keep only overlapping parts' },
+    { name: 'Convex Hull', value: 'hull', category: 'advanced', description: 'Create convex hull' },
+    { name: 'Offset', value: 'offset', category: 'advanced', description: 'Expand the cube outward' },
   ];
 
   // Convert Three.js BufferGeometry to Manifold Mesh
@@ -158,6 +163,10 @@ export default function ManifoldShowcase() {
         const resultMesh = new ThreeMesh(undefined, materials);
         scene.add(resultMesh);
 
+        // Create a group for showing both objects separately
+        const objectsGroup = new Group();
+        scene.add(objectsGroup);
+
         const renderer = new WebGLRenderer({
           canvas: canvasRef.current!,
           antialias: true,
@@ -166,6 +175,14 @@ export default function ManifoldShowcase() {
         const rect = canvasRef.current!.getBoundingClientRect();
         renderer.setSize(rect.width, rect.height);
         renderer.setPixelRatio(window.devicePixelRatio);
+
+        // Add orbit controls
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.screenSpacePanning = false;
+        controls.minDistance = 1;
+        controls.maxDistance = 10;
 
         // Create input geometries
         const cubeGeometry = new BoxGeometry(0.8, 0.8, 0.8);
@@ -181,18 +198,54 @@ export default function ManifoldShowcase() {
         const manifoldCube = new Manifold(geometry2mesh(cubeGeometry, wasm));
         const manifoldSphere = new Manifold(geometry2mesh(sphereGeometry, wasm));
 
-        // Perform initial operation
-        const performOperation = (op: BooleanOp) => {
+        // Perform initial operation - show both objects
+        const performOperation = (op: BooleanOp | AdvancedOp) => {
+          // Clear both displays
           if (resultMesh.geometry) {
             resultMesh.geometry.dispose();
           }
-          resultMesh.geometry = mesh2geometry(
-            Manifold[op](manifoldCube, manifoldSphere).getMesh(),
-            id2matIndex
-          );
+          resultMesh.visible = false;
+
+          // Clear objects group
+          while (objectsGroup.children.length > 0) {
+            const child = objectsGroup.children[0];
+            if (child instanceof ThreeMesh && child.geometry) {
+              child.geometry.dispose();
+            }
+            objectsGroup.remove(child);
+          }
+          objectsGroup.visible = false;
+
+          if (op === 'none') {
+            // Show both objects separately
+            const cubeMesh = new ThreeMesh(cubeGeometry.clone(), materials[1]);
+            cubeMesh.position.x = -0.6;
+            objectsGroup.add(cubeMesh);
+
+            const sphereMesh = new ThreeMesh(sphereGeometry.clone(), materials[2]);
+            sphereMesh.position.x = 0.6;
+            objectsGroup.add(sphereMesh);
+
+            objectsGroup.visible = true;
+          } else {
+            // Perform manifold operation
+            let result;
+            if (op === 'union' || op === 'difference' || op === 'intersection') {
+              result = Manifold[op](manifoldCube, manifoldSphere);
+            } else if (op === 'hull') {
+              result = manifoldCube.add(manifoldSphere).hull();
+            } else if (op === 'offset') {
+              result = manifoldCube.offset(0.1, 'round');
+            }
+
+            if (result) {
+              resultMesh.geometry = mesh2geometry(result.getMesh(), id2matIndex);
+              resultMesh.visible = true;
+            }
+          }
         };
 
-        performOperation('union');
+        performOperation('none');
 
         // Store references
         sceneRef.current = {
@@ -200,6 +253,8 @@ export default function ManifoldShowcase() {
           camera,
           renderer,
           resultMesh,
+          objectsGroup,
+          controls,
           materials,
           manifoldModule: wasm,
           Manifold,
@@ -208,11 +263,10 @@ export default function ManifoldShowcase() {
         };
 
         // Animation loop
-        const animate = (time: number) => {
+        const animate = () => {
           if (!mounted) return;
 
-          resultMesh.rotation.x = time / 3000;
-          resultMesh.rotation.y = time / 2000;
+          controls.update();
           renderer.render(scene, camera);
           animationFrameRef.current = requestAnimationFrame(animate);
         };
@@ -247,33 +301,59 @@ export default function ManifoldShowcase() {
   const handleOperationChange = (op: BooleanOp | AdvancedOp) => {
     if (!sceneRef.current) return;
 
-    const { Manifold, manifoldCube, manifoldSphere, resultMesh } = sceneRef.current;
+    const { Manifold, manifoldCube, manifoldSphere, resultMesh, objectsGroup, materials } = sceneRef.current;
 
     try {
+      setCurrentOp(op);
+
+      // Clear both displays
       if (resultMesh.geometry) {
         resultMesh.geometry.dispose();
       }
+      resultMesh.visible = false;
 
-      let result;
-
-      // Boolean operations
-      if (op === 'union' || op === 'difference' || op === 'intersection') {
-        result = Manifold[op](manifoldCube, manifoldSphere);
-        setCurrentOp(op);
+      // Clear objects group
+      while (objectsGroup.children.length > 0) {
+        const child = objectsGroup.children[0];
+        if (child instanceof ThreeMesh && child.geometry) {
+          child.geometry.dispose();
+        }
+        objectsGroup.remove(child);
       }
-      // Advanced operations
-      else if (op === 'hull') {
-        result = manifoldCube.add(manifoldSphere).hull();
-      } else if (op === 'offset') {
-        result = manifoldCube.offset(0.1, 'round');
-      }
+      objectsGroup.visible = false;
 
-      if (result) {
-        const id2matIndex = new Map();
-        sceneRef.current.materials.forEach((_, idx) => {
-          id2matIndex.set(idx, idx);
-        });
-        resultMesh.geometry = mesh2geometry(result.getMesh(), id2matIndex);
+      if (op === 'none') {
+        // Show both objects separately
+        const cubeGeometry = new BoxGeometry(0.8, 0.8, 0.8);
+        const cubeMesh = new ThreeMesh(cubeGeometry, materials[1]);
+        cubeMesh.position.x = -0.6;
+        objectsGroup.add(cubeMesh);
+
+        const sphereGeometry = new SphereGeometry(0.6, 32, 32);
+        const sphereMesh = new ThreeMesh(sphereGeometry, materials[2]);
+        sphereMesh.position.x = 0.6;
+        objectsGroup.add(sphereMesh);
+
+        objectsGroup.visible = true;
+      } else {
+        // Perform manifold operation
+        let result;
+        if (op === 'union' || op === 'difference' || op === 'intersection') {
+          result = Manifold[op](manifoldCube, manifoldSphere);
+        } else if (op === 'hull') {
+          result = manifoldCube.add(manifoldSphere).hull();
+        } else if (op === 'offset') {
+          result = manifoldCube.offset(0.1, 'round');
+        }
+
+        if (result) {
+          const id2matIndex = new Map();
+          materials.forEach((_, idx) => {
+            id2matIndex.set(idx, idx);
+          });
+          resultMesh.geometry = mesh2geometry(result.getMesh(), id2matIndex);
+          resultMesh.visible = true;
+        }
       }
     } catch (err) {
       console.error('Error performing operation:', err);
@@ -298,10 +378,25 @@ export default function ManifoldShowcase() {
       </div>
 
       <div className="mt-8 w-full max-w-2xl">
+        <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+          <p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
+            💡 Tip: Use your mouse to rotate, zoom, and pan around the 3D scene!
+          </p>
+        </div>
+
+        <div className="mb-4">
+          <h3 className="text-lg font-semibold mb-2 text-zinc-900 dark:text-zinc-100">
+            Current Operation: {operations.find(op => op.value === currentOp)?.name}
+          </h3>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            {operations.find(op => op.value === currentOp)?.description}
+          </p>
+        </div>
+
         <h3 className="text-lg font-semibold mb-4 text-zinc-900 dark:text-zinc-100">
           Boolean Operations
         </h3>
-        <div className="grid grid-cols-3 gap-3 mb-6">
+        <div className="grid grid-cols-2 gap-3 mb-6">
           {operations
             .filter((op) => op.category === 'boolean')
             .map((op) => (
@@ -309,13 +404,16 @@ export default function ManifoldShowcase() {
                 key={op.value}
                 onClick={() => handleOperationChange(op.value)}
                 disabled={isLoading}
-                className={`px-4 py-3 rounded-lg font-medium transition-all ${
+                className={`px-4 py-3 rounded-lg font-medium transition-all text-left ${
                   currentOp === op.value
-                    ? 'bg-blue-600 text-white shadow-lg scale-105'
+                    ? 'bg-blue-600 text-white shadow-lg ring-2 ring-blue-400'
                     : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-300 dark:hover:bg-zinc-700'
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
-                {op.name}
+                <div className="font-semibold">{op.name}</div>
+                <div className={`text-xs mt-1 ${currentOp === op.value ? 'text-blue-100' : 'text-zinc-600 dark:text-zinc-400'}`}>
+                  {op.description}
+                </div>
               </button>
             ))}
         </div>
@@ -331,9 +429,16 @@ export default function ManifoldShowcase() {
                 key={op.value}
                 onClick={() => handleOperationChange(op.value)}
                 disabled={isLoading}
-                className="px-4 py-3 rounded-lg font-medium bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className={`px-4 py-3 rounded-lg font-medium transition-all text-left ${
+                  currentOp === op.value
+                    ? 'bg-purple-600 text-white shadow-lg ring-2 ring-purple-400'
+                    : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-300 dark:hover:bg-zinc-700'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
-                {op.name}
+                <div className="font-semibold">{op.name}</div>
+                <div className={`text-xs mt-1 ${currentOp === op.value ? 'text-purple-100' : 'text-zinc-600 dark:text-zinc-400'}`}>
+                  {op.description}
+                </div>
               </button>
             ))}
         </div>
