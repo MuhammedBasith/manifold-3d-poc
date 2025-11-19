@@ -23,7 +23,7 @@ type Manifold = any;
 type Mesh = any;
 
 type BooleanOp = 'union' | 'difference' | 'intersection' | 'none';
-type AdvancedOp = 'hull' | 'offset';
+type AdvancedOp = 'hull' | 'compose';
 
 interface OperationButton {
   name: string;
@@ -57,8 +57,8 @@ export default function ManifoldShowcase() {
     { name: 'Union', value: 'union', category: 'boolean', description: 'Combine both shapes' },
     { name: 'Difference', value: 'difference', category: 'boolean', description: 'Subtract sphere from cube' },
     { name: 'Intersection', value: 'intersection', category: 'boolean', description: 'Keep only overlapping parts' },
-    { name: 'Convex Hull', value: 'hull', category: 'advanced', description: 'Create convex hull' },
-    { name: 'Offset', value: 'offset', category: 'advanced', description: 'Expand the cube outward' },
+    { name: 'Convex Hull', value: 'hull', category: 'advanced', description: 'Create convex hull around both' },
+    { name: 'Compose', value: 'compose', category: 'advanced', description: 'Combine as separate bodies' },
   ];
 
   // Convert Three.js BufferGeometry to Manifold Mesh
@@ -234,8 +234,8 @@ export default function ManifoldShowcase() {
               result = Manifold[op](manifoldCube, manifoldSphere);
             } else if (op === 'hull') {
               result = manifoldCube.add(manifoldSphere).hull();
-            } else if (op === 'offset') {
-              result = manifoldCube.offset(0.1, 'round');
+            } else if (op === 'compose') {
+              result = manifoldCube.add(manifoldSphere);
             }
 
             if (result) {
@@ -342,8 +342,8 @@ export default function ManifoldShowcase() {
           result = Manifold[op](manifoldCube, manifoldSphere);
         } else if (op === 'hull') {
           result = manifoldCube.add(manifoldSphere).hull();
-        } else if (op === 'offset') {
-          result = manifoldCube.offset(0.1, 'round');
+        } else if (op === 'compose') {
+          result = manifoldCube.add(manifoldSphere);
         }
 
         if (result) {
