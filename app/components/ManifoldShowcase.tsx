@@ -35,7 +35,7 @@ export default function ManifoldShowcase() {
   const [isLoading, setIsLoading] = useState(true);
   const [currentOp, setCurrentOp] = useState<BooleanOp>('union');
   const [error, setError] = useState<string | null>(null);
-  const animationFrameRef = useRef<number>();
+  const animationFrameRef = useRef<number | undefined>(undefined);
   const sceneRef = useRef<{
     scene: Scene;
     camera: PerspectiveCamera;
@@ -46,7 +46,7 @@ export default function ManifoldShowcase() {
     Manifold: any;
     manifoldCube: Manifold;
     manifoldSphere: Manifold;
-  }>();
+  }| undefined>(undefined);
 
   const operations: OperationButton[] = [
     { name: 'Union', value: 'union', category: 'boolean' },

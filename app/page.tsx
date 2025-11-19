@@ -1,4 +1,4 @@
-import ManifoldShowcase from "./components/ManifoldShowcase";
+import ManifoldShowcaseLoader from "./components/ManifoldShowcaseLoader";
 
 export default function Home() {
   return (
@@ -14,7 +14,7 @@ export default function Home() {
           </p>
         </div>
 
-        <ManifoldShowcase />
+        <ManifoldShowcaseLoader />
 
         <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
           <div className="bg-white dark:bg-zinc-800 p-6 rounded-lg shadow-md">
