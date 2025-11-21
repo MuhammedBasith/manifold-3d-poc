@@ -95,6 +95,8 @@ export interface WallType {
   description: string;
 }
 
+export type WallJointMethod = 'auto' | 'butt' | 'miter';
+
 export interface WallSettings {
   defaultHeight: number; // feet
   defaultThickness: number; // feet
@@ -103,6 +105,7 @@ export interface WallSettings {
   minThickness: number;
   maxThickness: number;
   types: WallType[];
+  jointMethod: WallJointMethod; // How walls connect at corners
 }
 
 export interface DoorSettings {
@@ -140,6 +143,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
       { name: 'Interior (4.5")', thickness: 4.5 / 12, description: 'Standard 2x4 interior wall' },
       { name: 'Exterior (6.5")', thickness: 6.5 / 12, description: 'Standard 2x6 exterior wall' },
     ],
+    jointMethod: 'auto', // Auto-select joint type based on geometry
   },
   door: {
     defaultWidth: 3.0, // 36 inches
