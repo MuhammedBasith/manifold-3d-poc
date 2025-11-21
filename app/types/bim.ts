@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
 
 export type ElementType = 'wall' | 'door' | 'window' | 'floor';
-export type ToolMode = 'select' | 'wall' | 'door' | 'delete' | 'pan';
+export type ToolMode = 'select' | 'wall' | 'door' | 'delete' | 'pan' | 'move';
 
 export interface Vec3Tuple {
   x: number;
@@ -53,6 +53,8 @@ export interface BIMDoor extends BIMElement {
   relationships: {
     parentWall: string; // ID of the wall hosting this door
   };
+  // Optional: Door orientation (if not provided, defaults will be used)
+  orientation?: import('./door-orientation').DoorOrientation;
 }
 
 export interface BIMWindow extends BIMElement {
