@@ -187,6 +187,10 @@ export default function BIMEditor() {
           case 'V':
             setToolMode('select');
             break;
+          case 'h':
+          case 'H':
+            setToolMode('pan');
+            break;
           case 'w':
           case 'W':
             setToolMode('wall');
@@ -273,6 +277,7 @@ export default function BIMEditor() {
         <h4 className="font-semibold mb-2">Keyboard Shortcuts</h4>
         <div className="space-y-1 text-xs">
           <div><kbd className="px-1 py-0.5 bg-zinc-700 rounded">V</kbd> - Select tool</div>
+          <div><kbd className="px-1 py-0.5 bg-zinc-700 rounded">H</kbd> - Pan tool</div>
           <div><kbd className="px-1 py-0.5 bg-zinc-700 rounded">W</kbd> - Wall tool</div>
           <div><kbd className="px-1 py-0.5 bg-zinc-700 rounded">D</kbd> - Door tool</div>
           <div><kbd className="px-1 py-0.5 bg-zinc-700 rounded">Del</kbd> - Delete selected</div>

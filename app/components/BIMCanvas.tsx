@@ -67,7 +67,7 @@ export default function BIMCanvas({
   gridEnabled,
 }: BIMCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null!);
-  const { scene, camera, isReady } = useThreeScene(canvasRef, {
+  const { scene, camera, isReady, controls } = useThreeScene(canvasRef, {
     enableGrid: gridEnabled,
     gridSize: 100, // 100 feet grid extent
     gridDivisions: 100, // 1 foot grid lines
@@ -79,6 +79,7 @@ export default function BIMCanvas({
   const wallPreviewMeshRef = useRef<Object3D | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const mouseDownPosRef = useRef<{ x: number; y: number } | null>(null);
+  const [currentAngle, setCurrentAngle] = useState<number | null>(null);
 
   // Door preview state
   const previewGroupRef = useRef<Group | null>(null);
@@ -574,6 +575,10 @@ export default function BIMCanvas({
               },
             },
             properties: {},
+            relationships: {
+              hostedElements: [],
+              connectedWalls: [],
+            },
           });
 
           setWallStartPoint(null);
@@ -703,6 +708,9 @@ export default function BIMCanvas({
               },
             },
             properties: {},
+            relationships: {
+              parentWall: wallId,
+            },
           });
 
           // Clear preview immediately
@@ -892,9 +900,28 @@ export default function BIMCanvas({
 
         // Create ghost mesh
         const start = wallStartPoint;
-        const end = targetPoint;
+        let end = targetPoint;
+
+        // Calculate angle and snap
         const direction = new Vector3().subVectors(end, start);
-        const length = direction.length();
+        let angle = Math.atan2(direction.z, direction.x);
+
+        // Snap to 45 degree increments
+        const snapAngle = Math.PI / 4; // 45 degrees
+        const snappedAngle = Math.round(angle / snapAngle) * snapAngle;
+
+        // If close to a snap angle (within 5 degrees), snap to it
+        if (Math.abs(angle - snappedAngle) < 0.087) { // ~5 degrees
+          const length = direction.length();
+          end = new Vector3(
+            start.x + Math.cos(snappedAngle) * length,
+            start.y,
+            start.z + Math.sin(snappedAngle) * length
+          );
+          angle = snappedAngle;
+        }
+
+        const length = start.distanceTo(end);
 
         if (length > 0.1) {
           const geometry = createWallGeometry(length, wallHeight, wallThickness);
@@ -911,12 +938,18 @@ export default function BIMCanvas({
           mesh.position.copy(midpoint);
 
           // Rotate
-          const angle = Math.atan2(direction.z, direction.x);
           mesh.rotation.y = -angle;
 
           scene.add(mesh);
           wallPreviewMeshRef.current = mesh;
+
+          // Update angle indicator (using HTML overlay for simplicity, or we could add a TextSprite)
+          // For now, we'll rely on the visual snap. 
+          // To show the angle text, we can use a simple HTML overlay updated via state or ref.
+          setCurrentAngle(angle * (180 / Math.PI));
         }
+      } else {
+        setCurrentAngle(null);
       }
 
       // Door preview
@@ -1078,7 +1111,32 @@ export default function BIMCanvas({
         wallPreviewMeshRef.current = null;
       }
     }
-  }, [toolMode, scene]);
+
+    // Handle Pan Tool
+    if (controls) {
+      if (toolMode === 'pan') {
+        controls.mouseButtons = {
+          LEFT: THREE.MOUSE.PAN,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.ROTATE
+        };
+        // Change cursor
+        if (canvasRef.current) {
+          canvasRef.current.style.cursor = 'grab';
+        }
+      } else {
+        controls.mouseButtons = {
+          LEFT: THREE.MOUSE.ROTATE,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN
+        };
+        if (canvasRef.current) {
+          canvasRef.current.style.cursor = 'default';
+        }
+      }
+      controls.update();
+    }
+  }, [toolMode, scene, controls]);
 
   return (
     <div className="relative w-full h-full">
@@ -1096,6 +1154,11 @@ export default function BIMCanvas({
       {toolMode === 'wall' && wallStartPoint && (
         <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg">
           Click to set wall end point
+          {currentAngle !== null && (
+            <span className="ml-2 font-bold">
+              {Math.abs(currentAngle).toFixed(0)}°
+            </span>
+          )}
         </div>
       )}
       {toolMode === 'door' && (

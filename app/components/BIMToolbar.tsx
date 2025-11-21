@@ -47,6 +47,7 @@ export default function BIMToolbar({
 }: BIMToolbarProps) {
   const tools: { mode: ToolMode; icon: string; label: string; color: string }[] = [
     { mode: 'select', icon: '⊙', label: 'Select', color: 'bg-blue-600' },
+    { mode: 'pan', icon: '✋', label: 'Pan', color: 'bg-orange-600' },
     { mode: 'wall', icon: '▬', label: 'Wall', color: 'bg-green-600' },
     { mode: 'door', icon: '⌂', label: 'Door', color: 'bg-purple-600' },
     { mode: 'delete', icon: '✕', label: 'Delete', color: 'bg-red-600' },
@@ -62,8 +63,8 @@ export default function BIMToolbar({
               key={tool.mode}
               onClick={() => onToolChange(tool.mode)}
               className={`flex flex-col items-center justify-center w-16 h-16 rounded-lg font-semibold transition-all ${toolMode === tool.mode
-                  ? `${tool.color} text-white shadow-lg scale-105`
-                  : 'bg-zinc-100 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-600'
+                ? `${tool.color} text-white shadow-lg scale-105`
+                : 'bg-zinc-100 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-600'
                 }`}
               title={tool.label}
             >
@@ -148,8 +149,8 @@ export default function BIMToolbar({
         <button
           onClick={onGridToggle}
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${gridEnabled
-              ? 'bg-green-600 text-white'
-              : 'bg-zinc-100 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-600'
+            ? 'bg-green-600 text-white'
+            : 'bg-zinc-100 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-600'
             }`}
         >
           Grid: {gridEnabled ? 'ON' : 'OFF'}

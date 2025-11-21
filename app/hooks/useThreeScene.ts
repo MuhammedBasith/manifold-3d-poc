@@ -13,6 +13,11 @@ import {
   Mesh as ThreeMesh,
 } from 'three';
 import { OrbitControls } from 'three-stdlib';
+import { createInfiniteGridMeshV3 } from '../lib/infinite-grid';
+
+// ... (keeping the rest of the file imports)
+
+
 
 interface ThreeSceneOptions {
   enableShadows?: boolean;
@@ -113,17 +118,16 @@ export function useThreeScene(
       directionalLight.shadow.camera.near = 0.1;
       directionalLight.shadow.camera.far = 100;
       directionalLight.shadow.camera.left = -20;
-      directionalLight.shadow.camera.right = 20;
       directionalLight.shadow.camera.top = 20;
       directionalLight.shadow.camera.bottom = -20;
     }
     scene.add(directionalLight);
 
-    // Add grid helper
+    // Add infinite grid
     if (enableGrid) {
-      const gridHelper = new GridHelper(gridSize, gridDivisions, 0x444444, 0x222222);
-      gridHelper.name = 'gridHelper';
-      scene.add(gridHelper);
+      // Create infinite grid (v6)
+      const grid = createInfiniteGridMeshV3(gridSize / 10, 10, 0x666666);
+      scene.add(grid);
     }
 
     // Add axes helper

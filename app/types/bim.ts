@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
 
 export type ElementType = 'wall' | 'door' | 'window' | 'floor';
-export type ToolMode = 'select' | 'wall' | 'door' | 'delete';
+export type ToolMode = 'select' | 'wall' | 'door' | 'delete' | 'pan';
 
 export interface Vec3Tuple {
   x: number;
@@ -27,12 +27,22 @@ export interface BIMElement {
   materialId?: number;
 }
 
+export interface WallConnection {
+  wallId: string;
+  connectionType: 'L_JOINT' | 'T_JOINT' | 'X_JOINT' | 'OBLIQUE' | 'BUTT';
+  at: 'start' | 'end';
+}
+
 export interface BIMWall extends BIMElement {
   type: 'wall';
   start: Vec3Tuple;
   end: Vec3Tuple;
   thickness: number;
   doors: string[]; // Array of door IDs attached to this wall
+  relationships: {
+    hostedElements: string[]; // IDs of elements hosted by this wall (doors, windows)
+    connectedWalls: WallConnection[];
+  };
 }
 
 export interface BIMDoor extends BIMElement {
@@ -40,6 +50,9 @@ export interface BIMDoor extends BIMElement {
   parentWallId: string;
   offsetOnWall: number; // Distance along wall from start point
   wallNormal: Vec3Tuple; // Normal of the wall face
+  relationships: {
+    parentWall: string; // ID of the wall hosting this door
+  };
 }
 
 export interface BIMWindow extends BIMElement {
