@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import {
   Vector3,
@@ -34,6 +34,9 @@ import {
 } from '../types/bim';
 import { createWallGeometry, createDoorGeometries, createDoorCutterGeometry, buildWallNetworks, WallNetwork } from '../lib/bim-geometry';
 import { processWallNetwork, ExtendedWallGeometry } from '../lib/wall-joints';
+import { usePreviewValidation } from '../hooks/useValidation';
+import { getOrientationFromState, calculateDoorRotation, getOrientationDescription } from '../lib/door-orientation';
+import { DoorOrientation } from '../types/door-orientation';
 
 interface BIMCanvasProps {
   toolMode: ToolMode;
@@ -84,6 +87,12 @@ export default function BIMCanvas({
 
   // Door preview state
   const previewGroupRef = useRef<Group | null>(null);
+  const [doorPreviewElement, setDoorPreviewElement] = useState<BIMDoor | null>(null);
+  const [doorOrientationState, setDoorOrientationState] = useState(0); // 0-3 for four states
+
+  // Validation for door preview
+  const allElements = useMemo<BIMElement[]>(() => [...walls, ...doors], [walls, doors]);
+  const doorPreviewValidation = usePreviewValidation(doorPreviewElement, allElements);
 
   // Raycaster
   const raycasterRef = useRef(new Raycaster());
@@ -567,17 +576,28 @@ export default function BIMCanvas({
     }
   }, []);
 
-  // Helper to update door preview
-  const updateDoorPreview = useCallback((visible: boolean, position?: Vector3, rotationY?: number) => {
+  // Helper to update door preview with validation-based coloring
+  const updateDoorPreview = useCallback((visible: boolean, position?: Vector3, rotationY?: number, isValid?: boolean) => {
     if (!scene) return;
 
-    // Lazy create preview group
-    if (!previewGroupRef.current) {
+    // Determine color based on validation (default to brown if not provided)
+    const previewColor = isValid === false ? 0xff0000 : (isValid === true ? 0x00ff00 : 0x8B4513);
+
+    // Recreate preview group if it doesn't exist or color changed
+    const needsRecreate = !previewGroupRef.current;
+
+    if (needsRecreate) {
+      // Remove old preview if exists
+      if (previewGroupRef.current) {
+        scene.remove(previewGroupRef.current);
+        previewGroupRef.current = null;
+      }
+
       const group = new Group();
       const { frame, panel } = createDoorGeometries(doorWidth, doorHeight, wallThickness);
 
       const previewMat = new MeshLambertMaterial({
-        color: 0x8B4513,
+        color: previewColor,
         transparent: true,
         opacity: 0.6,
       });
@@ -593,6 +613,14 @@ export default function BIMCanvas({
     }
 
     const group = previewGroupRef.current;
+    if (!group) return;
+
+    // Update material color based on validation
+    group.traverse((child) => {
+      if (child instanceof ThreeMesh && child.material instanceof MeshLambertMaterial) {
+        child.material.color.setHex(previewColor);
+      }
+    });
 
     if (visible && position && rotationY !== undefined) {
       group.visible = true;
@@ -610,6 +638,21 @@ export default function BIMCanvas({
       previewGroupRef.current = null;
     }
   }, [doorWidth, doorHeight, wallThickness, scene]);
+
+  // Update preview color based on validation result
+  useEffect(() => {
+    if (!previewGroupRef.current) return;
+
+    const previewColor = doorPreviewValidation.isValid === false
+      ? 0xff0000
+      : (doorPreviewValidation.isValid === true ? 0x00ff00 : 0x8B4513);
+
+    previewGroupRef.current.traverse((child) => {
+      if (child instanceof ThreeMesh && child.material instanceof MeshLambertMaterial) {
+        child.material.color.setHex(previewColor);
+      }
+    });
+  }, [doorPreviewValidation.isValid]);
 
   // Handle mouse click
   const handleCanvasClick = useCallback(
@@ -777,9 +820,18 @@ export default function BIMCanvas({
             projectedPoint.copy(wallStart).add(wallDirection.clone().multiplyScalar(clampedDist));
           }
 
-          // Calculate rotation based on wall direction
-          const angle = Math.atan2(wallDirection.z, wallDirection.x);
-          const rotationY = -angle;
+          // Get current door orientation and calculate rotation
+          const doorOrientation = getOrientationFromState(doorOrientationState, wall);
+          const doorRotation = calculateDoorRotation(wall, projectedPoint, doorOrientation);
+
+          // Check validation before placing - don't place if errors
+          if (!doorPreviewValidation.isValid) {
+            // Show error message to user
+            const errors = doorPreviewValidation.getErrors();
+            console.warn('[Door Placement] Cannot place door - validation errors:', errors);
+            alert(`Cannot place door:\n${errors.map(e => `- ${e.message}`).join('\n')}`);
+            return;
+          }
 
           onDoorPlace({
             parentWallId: wallId,
@@ -787,7 +839,7 @@ export default function BIMCanvas({
             wallNormal: vec3ToTuple(normal),
             geometry: {
               position: vec3ToTuple(projectedPoint),
-              rotation: { x: 0, y: rotationY, z: 0 }, // Use wall alignment
+              rotation: doorRotation,
               dimensions: {
                 width: doorWidth,
                 height: doorHeight,
@@ -798,10 +850,12 @@ export default function BIMCanvas({
             relationships: {
               parentWall: wallId,
             },
+            orientation: doorOrientation,
           });
 
           // Clear preview immediately
           updateDoorPreview(false);
+          setDoorPreviewElement(null);
         }
       } else if (toolMode === 'select') {
         // Raycast to select element
@@ -955,7 +1009,9 @@ export default function BIMCanvas({
       doorHeight,
       isDragging,
       gridEnabled,
-      updateDoorPreview
+      updateDoorPreview,
+      doorPreviewValidation,
+      doorOrientationState
     ]
   );
 
@@ -1111,28 +1167,61 @@ export default function BIMCanvas({
 
               const finalPos = wallStart.clone().add(wallDirection.multiplyScalar(snappedDist));
 
-              // Calculate rotation based on wall direction
-              const angle = Math.atan2(wallDirection.z, wallDirection.x);
-              const rotationY = -angle;
+              // Get current door orientation based on state
+              const doorOrientation = getOrientationFromState(doorOrientationState, wall);
 
+              // Calculate rotation based on wall direction and orientation
+              const doorRotation = calculateDoorRotation(wall, finalPos, doorOrientation);
+              const rotationY = doorRotation.y;
+
+              // Create preview door element for validation
+              const previewDoor: BIMDoor = {
+                id: 'preview',
+                type: 'door',
+                parentWallId: wall.id,
+                offsetOnWall: snappedDist,
+                wallNormal: vec3ToTuple(normal),
+                geometry: {
+                  position: vec3ToTuple(finalPos),
+                  rotation: doorRotation,
+                  dimensions: {
+                    width: doorWidth,
+                    height: doorHeight,
+                    depth: wall.thickness,
+                  },
+                },
+                properties: {},
+                relationships: {
+                  parentWall: wall.id,
+                },
+                orientation: doorOrientation,
+              };
+
+              // Set preview element for validation
+              setDoorPreviewElement(previewDoor);
+
+              // Update preview position (color will be updated by validation effect)
               updateDoorPreview(true, finalPos, rotationY);
             }
           } else {
             updateDoorPreview(false);
+            setDoorPreviewElement(null);
           }
         } else {
           // No wall hit - hide preview
           updateDoorPreview(false);
+          setDoorPreviewElement(null);
         }
       } else {
         // Not in door mode - hide preview
         updateDoorPreview(false);
+        setDoorPreviewElement(null);
       }
     },
-    [scene, camera, toolMode, wallStartPoint, getSnappedWallEndpoint, getGroundIntersection, doorWidth, doorHeight, wallThickness, handleCanvasMouseMoveForDrag, walls, gridEnabled, updateDoorPreview, wallHeight]
+    [scene, camera, toolMode, wallStartPoint, getSnappedWallEndpoint, getGroundIntersection, doorWidth, doorHeight, wallThickness, handleCanvasMouseMoveForDrag, walls, gridEnabled, updateDoorPreview, wallHeight, doorOrientationState]
   );
 
-  // Handle keyboard events for escape and Shift key
+  // Handle keyboard events for escape, Shift, and Spacebar (door orientation)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && wallStartPoint && scene) {
@@ -1146,10 +1235,16 @@ export default function BIMCanvas({
       // Also cancel door preview if in door mode
       if (e.key === 'Escape' && toolMode === 'door') {
         updateDoorPreview(false);
+        setDoorPreviewElement(null);
       }
       // Track Shift key for snap override
       if (e.key === 'Shift') {
         setShiftKeyPressed(true);
+      }
+      // Spacebar: cycle door orientation during door placement
+      if (e.key === ' ' && toolMode === 'door') {
+        e.preventDefault(); // Prevent page scroll
+        setDoorOrientationState(prev => (prev + 1) % 4);
       }
     };
 
@@ -1255,8 +1350,38 @@ export default function BIMCanvas({
         </div>
       )}
       {toolMode === 'door' && (
-        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg">
-          Click on a wall to place door
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 space-y-2">
+          <div className={`px-4 py-2 rounded-lg shadow-lg text-white ${
+            doorPreviewElement && !doorPreviewValidation.isValid ? 'bg-red-600' : 'bg-blue-600'
+          }`}>
+            <div className="flex items-center gap-2">
+              <span>{doorPreviewElement && !doorPreviewValidation.isValid ? 'Invalid placement' : 'Click on a wall to place door'}</span>
+              {doorPreviewElement && (
+                <span className={`text-xs px-2 py-0.5 rounded ${
+                  doorPreviewValidation.isValid ? 'bg-green-700' : 'bg-red-700'
+                }`}>
+                  {doorPreviewValidation.isValid ? '✓ Valid' : '✗ Invalid'}
+                </span>
+              )}
+            </div>
+            {doorPreviewElement && doorPreviewElement.orientation && (
+              <div className="mt-2 text-xs bg-blue-700 px-2 py-1 rounded">
+                <span className="font-semibold">Orientation:</span>{' '}
+                {getOrientationDescription(doorPreviewElement.orientation)}
+                <span className="ml-2 text-yellow-300">(Spacebar to cycle)</span>
+              </div>
+            )}
+            {doorPreviewElement && !doorPreviewValidation.isValid && (
+              <div className="mt-2 text-xs space-y-1">
+                {doorPreviewValidation.getErrors().map((error, idx) => (
+                  <div key={idx} className="flex items-start gap-1">
+                    <span>•</span>
+                    <span>{error.message}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
