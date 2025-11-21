@@ -48,6 +48,7 @@ export default function BIMToolbar({
   const tools: { mode: ToolMode; icon: string; label: string; color: string }[] = [
     { mode: 'select', icon: '⊙', label: 'Select', color: 'bg-blue-600' },
     { mode: 'pan', icon: '✋', label: 'Pan', color: 'bg-orange-600' },
+    { mode: 'move', icon: '⇄', label: 'Move', color: 'bg-teal-600' },
     { mode: 'wall', icon: '▬', label: 'Wall', color: 'bg-green-600' },
     { mode: 'door', icon: '⌂', label: 'Door', color: 'bg-purple-600' },
     { mode: 'delete', icon: '✕', label: 'Delete', color: 'bg-red-600' },
