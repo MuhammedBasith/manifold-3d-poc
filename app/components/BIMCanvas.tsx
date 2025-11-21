@@ -32,7 +32,8 @@ import {
   tupleToVec3,
   DEFAULT_EDITOR_SETTINGS,
 } from '../types/bim';
-import { createWallGeometry, createDoorGeometries, createDoorCutterGeometry } from '../lib/bim-geometry';
+import { createWallGeometry, createDoorGeometries, createDoorCutterGeometry, buildWallNetworks, WallNetwork } from '../lib/bim-geometry';
+import { processWallNetwork, ExtendedWallGeometry } from '../lib/wall-joints';
 
 interface BIMCanvasProps {
   toolMode: ToolMode;
@@ -234,34 +235,103 @@ export default function BIMCanvas({
   const rebuildScene = useCallback(() => {
     if (!scene || !manifoldLoaded || !performBoolean) return;
 
-    // Remove all BIM elements and helpers
+    // Remove all BIM elements, helpers, and highlights
     const toRemove: THREE.Object3D[] = [];
     scene.traverse((object) => {
-      if (object.userData.elementType || object instanceof BoxHelper) {
+      if (object.userData.elementType || object.userData.isHighlight || object instanceof BoxHelper) {
         toRemove.push(object);
       }
     });
     toRemove.forEach((obj) => scene.remove(obj));
 
-    // Create wall meshes with door openings
-    walls.forEach((wall) => {
-      const start = tupleToVec3(wall.start);
-      const end = tupleToVec3(wall.end);
+    // Build wall networks (groups of connected walls)
+    const wallNetworks = buildWallNetworks(walls);
 
-      let wallMesh = createWallMesh(start, end, wall.geometry.dimensions.height, wall.thickness, wall.id);
+    // Process each wall network
+    wallNetworks.forEach((network) => {
+      if (network.walls.length === 0) return;
 
-      // If wall has doors, subtract them using Manifold
-      const wallDoors = doors.filter((door) => door.parentWallId === wall.id);
+      // Calculate extended geometries for proper corner joining
+      const extensions = processWallNetwork(network.walls, 'auto');
 
-      if (wallDoors.length > 0 && wallMesh.geometry) {
-        let wallGeometry = wallMesh.geometry.clone();
+      // Create individual wall geometries in world space
+      const wallGeometries: BufferGeometry[] = [];
 
-        for (const door of wallDoors) {
+      network.walls.forEach((wall) => {
+        // Get extended geometry if available, otherwise use original
+        const ext = extensions.get(wall.id);
+        const start = ext ? ext.extendedStart : tupleToVec3(wall.start);
+        const end = ext ? ext.extendedEnd : tupleToVec3(wall.end);
+
+        const direction = new Vector3().subVectors(end, start);
+        const length = direction.length();
+
+        // Create wall geometry
+        const geometry = createWallGeometry(length, wall.geometry.dimensions.height, wall.thickness);
+
+        // Position and rotate geometry to world space
+        const midpoint = new Vector3().addVectors(start, end).multiplyScalar(0.5);
+        midpoint.y = wall.geometry.dimensions.height / 2;
+
+        const angle = Math.atan2(direction.z, direction.x);
+
+        const matrix = new Matrix4();
+        matrix.makeRotationY(-angle);
+        matrix.setPosition(midpoint);
+
+        geometry.applyMatrix4(matrix);
+        wallGeometries.push(geometry);
+      });
+
+      // Union all walls in the network together
+      let unifiedGeometry: BufferGeometry | null = null;
+
+      if (wallGeometries.length === 1) {
+        // Single wall, no union needed
+        unifiedGeometry = wallGeometries[0];
+      } else {
+        // Union multiple walls together
+        unifiedGeometry = wallGeometries[0];
+
+        for (let i = 1; i < wallGeometries.length; i++) {
+          const result = performBoolean(unifiedGeometry, wallGeometries[i], 'union');
+
+          if (result) {
+            // Dispose previous geometry
+            if (i > 1) {
+              unifiedGeometry.dispose();
+            }
+            unifiedGeometry = result;
+          }
+
+          // Dispose the geometry we just unioned
+          if (i > 0) {
+            wallGeometries[i].dispose();
+          }
+        }
+      }
+
+      if (!unifiedGeometry) return;
+
+      // Now subtract doors from the unified wall network
+      const networkDoorIds = new Set(
+        network.walls.flatMap(wall => wall.doors)
+      );
+
+      const networkDoors = doors.filter((door) => networkDoorIds.has(door.id));
+
+      if (networkDoors.length > 0) {
+        let wallGeometry = unifiedGeometry;
+
+        for (const door of networkDoors) {
+          const parentWall = network.walls.find(w => w.id === door.parentWallId);
+          if (!parentWall) continue;
+
           // Create door cutter geometry
           const cutterGeometry = createDoorCutterGeometry(
             door.geometry.dimensions.width,
             door.geometry.dimensions.height,
-            wall.thickness
+            parentWall.thickness
           );
 
           // Position cutter geometry in world space
@@ -269,19 +339,13 @@ export default function BIMCanvas({
           const doorRot = tupleToVec3(door.geometry.rotation);
 
           const cutterMatrix = new Matrix4();
-          // Apply rotation first, then translation
           const rotationMatrix = new Matrix4().makeRotationFromEuler(new THREE.Euler(doorRot.x, doorRot.y, doorRot.z));
           const translationMatrix = new Matrix4().makeTranslation(doorPos.x, doorPos.y, doorPos.z);
 
           cutterMatrix.multiplyMatrices(translationMatrix, rotationMatrix);
           cutterGeometry.applyMatrix4(cutterMatrix);
 
-          // Transform cutter to Wall's Local Space.
-          wallMesh.updateMatrix();
-          const wallInverse = wallMesh.matrix.clone().invert();
-          cutterGeometry.applyMatrix4(wallInverse);
-
-          // Perform boolean subtraction
+          // Perform boolean subtraction (cutter is already in world space)
           const resultGeometry = performBoolean(wallGeometry, cutterGeometry, 'difference');
 
           if (resultGeometry) {
@@ -292,24 +356,78 @@ export default function BIMCanvas({
           cutterGeometry.dispose();
         }
 
-        wallMesh.geometry.dispose();
-        wallMesh.geometry = wallGeometry;
+        unifiedGeometry = wallGeometry;
       }
 
-      // Add selection highlight for selected walls
-      if (selectedElementId === wall.id) {
-        const edges = new EdgesGeometry(wallMesh.geometry);
-        const lineMaterial = new LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
+      // Create final mesh for the unified wall network
+      const material = new MeshLambertMaterial({
+        color: 0xeeeeee,
+        transparent: false,
+      });
+
+      const networkMesh = new ThreeMesh(unifiedGeometry, material);
+
+      // Store metadata for all walls in this network
+      networkMesh.userData.elementType = 'wall';
+      networkMesh.userData.wallIds = Array.from(network.wallIds);
+      networkMesh.userData.isNetwork = true;
+      networkMesh.castShadow = true;
+      networkMesh.receiveShadow = true;
+
+      scene.add(networkMesh);
+
+      // Add selection highlight for individual selected wall (not entire network)
+      const selectedWall = network.walls.find(w => w.id === selectedElementId);
+      if (selectedWall) {
+        // Get the wall's actual geometry (possibly extended)
+        const ext = extensions.get(selectedWall.id);
+        const start = ext ? ext.extendedStart : tupleToVec3(selectedWall.start);
+        const end = ext ? ext.extendedEnd : tupleToVec3(selectedWall.end);
+
+        const direction = new Vector3().subVectors(end, start);
+        const length = direction.length();
+
+        // Create highlight box for just this wall
+        const highlightGeo = new BoxGeometry(
+          length,
+          selectedWall.geometry.dimensions.height,
+          selectedWall.thickness
+        );
+
+        const midpoint = new Vector3().addVectors(start, end).multiplyScalar(0.5);
+        midpoint.y = selectedWall.geometry.dimensions.height / 2;
+
+        const angle = Math.atan2(direction.z, direction.x);
+
+        const matrix = new Matrix4();
+        matrix.makeRotationY(-angle);
+        matrix.setPosition(midpoint);
+
+        highlightGeo.applyMatrix4(matrix);
+
+        // Create edge highlight
+        const edges = new EdgesGeometry(highlightGeo);
+        const lineMaterial = new LineBasicMaterial({
+          color: 0x00ff00,
+          linewidth: 3,
+          transparent: true,
+          opacity: 0.9
+        });
         const wireframe = new LineSegments(edges, lineMaterial);
-        wallMesh.add(wireframe);
-      }
+        wireframe.userData.isHighlight = true;
+        wireframe.userData.elementId = selectedWall.id;
+        scene.add(wireframe);
 
-      scene.add(wallMesh);
+        highlightGeo.dispose();
+      }
     });
 
     // Create actual door meshes
     doors.forEach((door) => {
-      const doorObject = createDoorObject(door, walls.find(w => w.id === door.parentWallId)!);
+      const parentWall = walls.find(w => w.id === door.parentWallId);
+      if (!parentWall) return;
+
+      const doorObject = createDoorObject(door, parentWall);
       if (doorObject) {
         scene.add(doorObject);
 
@@ -328,7 +446,7 @@ export default function BIMCanvas({
         }
       }
     });
-  }, [scene, walls, doors, manifoldLoaded, performBoolean, createWallMesh, createDoorObject, selectedElementId]);
+  }, [scene, walls, doors, manifoldLoaded, performBoolean, createDoorObject, selectedElementId]);
 
   // Update scene when model changes
   useEffect(() => {
@@ -485,7 +603,6 @@ export default function BIMCanvas({
 
         if (intersects.length > 0) {
           const intersection = intersects[0];
-          const wallId = intersection.object.userData.elementId;
           const point = intersection.point;
           const normal = intersection.face?.normal.clone();
 
@@ -493,6 +610,46 @@ export default function BIMCanvas({
 
           // Transform normal to world space
           normal.transformDirection(intersection.object.matrixWorld);
+
+          // Check if this is a wall network or a single wall
+          let wallId = intersection.object.userData.elementId;
+          const isNetwork = intersection.object.userData.isNetwork;
+
+          if (isNetwork && intersection.object.userData.wallIds) {
+            // It's a network, find specific wall
+            const wallIds = intersection.object.userData.wallIds as string[];
+            const networkWalls = walls.filter(w => wallIds.includes(w.id));
+
+            let closestWallId: string | null = null;
+            let minDistance = Infinity;
+
+            networkWalls.forEach(wall => {
+              const start = tupleToVec3(wall.start);
+              const end = tupleToVec3(wall.end);
+
+              const wallDir = new Vector3().subVectors(end, start);
+              const wallLength = wallDir.length();
+              wallDir.normalize();
+
+              const toPoint = new Vector3().subVectors(point, start);
+              const projection = toPoint.dot(wallDir);
+              const clampedProjection = Math.max(0, Math.min(wallLength, projection));
+
+              const closestPointOnWall = start.clone().add(wallDir.multiplyScalar(clampedProjection));
+              const distance = point.distanceTo(closestPointOnWall);
+
+              if (distance < minDistance) {
+                minDistance = distance;
+                closestWallId = wall.id;
+              }
+            });
+
+            if (closestWallId) {
+              wallId = closestWallId;
+            }
+          }
+
+          if (!wallId) return;
 
           const wall = walls.find((w) => w.id === wallId);
           if (!wall) return;
@@ -563,8 +720,7 @@ export default function BIMCanvas({
 
         const selectableObjects: Object3D[] = [];
         scene.traverse((object) => {
-          if (object.userData.elementId) {
-            // If it's a mesh inside a group (like door parts), we want the group or the ID
+          if (object.userData.elementId || object.userData.elementType === 'wall') {
             selectableObjects.push(object);
           }
         });
@@ -572,15 +728,49 @@ export default function BIMCanvas({
         const intersects = raycasterRef.current.intersectObjects(selectableObjects, false);
 
         if (intersects.length > 0) {
-          // Find the root element ID (could be on parent group)
-          let target = intersects[0].object;
-          while (target && !target.userData.elementId && target.parent) {
-            target = target.parent;
-          }
+          const target = intersects[0].object;
+          const point = intersects[0].point;
 
-          const elementId = target.userData.elementId;
-          if (elementId) {
-            onElementSelect(elementId);
+          // Check if this is a wall network
+          if (target.userData.isNetwork && target.userData.wallIds) {
+            // Find which specific wall in the network was clicked
+            const wallIds = target.userData.wallIds as string[];
+            const networkWalls = walls.filter(w => wallIds.includes(w.id));
+
+            // Find the closest wall to the intersection point
+            let closestWallId: string | null = null;
+            let minDistance = Infinity;
+
+            networkWalls.forEach(wall => {
+              const start = tupleToVec3(wall.start);
+              const end = tupleToVec3(wall.end);
+
+              // Calculate distance from point to wall line segment
+              const wallDir = new Vector3().subVectors(end, start);
+              const wallLength = wallDir.length();
+              wallDir.normalize();
+
+              const toPoint = new Vector3().subVectors(point, start);
+              const projection = toPoint.dot(wallDir);
+              const clampedProjection = Math.max(0, Math.min(wallLength, projection));
+
+              const closestPointOnWall = start.clone().add(wallDir.multiplyScalar(clampedProjection));
+              const distance = point.distanceTo(closestPointOnWall);
+
+              if (distance < minDistance) {
+                minDistance = distance;
+                closestWallId = wall.id;
+              }
+            });
+
+            if (closestWallId) {
+              onElementSelect(closestWallId);
+            }
+          } else if (target.userData.elementId) {
+            // Direct element ID (door, standalone wall, etc)
+            onElementSelect(target.userData.elementId);
+          } else {
+            onElementSelect(null);
           }
         } else {
           onElementSelect(null);
@@ -597,7 +787,7 @@ export default function BIMCanvas({
 
         const selectableObjects: Object3D[] = [];
         scene.traverse((object) => {
-          if (object.userData.elementId) {
+          if (object.userData.elementId || object.userData.elementType === 'wall') {
             selectableObjects.push(object);
           }
         });
@@ -605,13 +795,47 @@ export default function BIMCanvas({
         const intersects = raycasterRef.current.intersectObjects(selectableObjects, false);
 
         if (intersects.length > 0) {
-          let target = intersects[0].object;
-          while (target && !target.userData.elementId && target.parent) {
-            target = target.parent;
-          }
-          const elementId = target.userData.elementId;
-          if (elementId) {
-            onElementDelete(elementId);
+          const target = intersects[0].object;
+          const point = intersects[0].point;
+
+          // Check if this is a wall network
+          if (target.userData.isNetwork && target.userData.wallIds) {
+            // Find which specific wall in the network was clicked
+            const wallIds = target.userData.wallIds as string[];
+            const networkWalls = walls.filter(w => wallIds.includes(w.id));
+
+            // Find the closest wall to the intersection point
+            let closestWallId: string | null = null;
+            let minDistance = Infinity;
+
+            networkWalls.forEach(wall => {
+              const start = tupleToVec3(wall.start);
+              const end = tupleToVec3(wall.end);
+
+              // Calculate distance from point to wall line segment
+              const wallDir = new Vector3().subVectors(end, start);
+              const wallLength = wallDir.length();
+              wallDir.normalize();
+
+              const toPoint = new Vector3().subVectors(point, start);
+              const projection = toPoint.dot(wallDir);
+              const clampedProjection = Math.max(0, Math.min(wallLength, projection));
+
+              const closestPointOnWall = start.clone().add(wallDir.multiplyScalar(clampedProjection));
+              const distance = point.distanceTo(closestPointOnWall);
+
+              if (distance < minDistance) {
+                minDistance = distance;
+                closestWallId = wall.id;
+              }
+            });
+
+            if (closestWallId) {
+              onElementDelete(closestWallId);
+            }
+          } else if (target.userData.elementId) {
+            // Direct element ID (door, etc)
+            onElementDelete(target.userData.elementId);
           }
         }
       }
@@ -716,18 +940,56 @@ export default function BIMCanvas({
 
         if (intersects.length > 0) {
           const intersection = intersects[0];
-          const wallId = intersection.object.userData.elementId;
           const point = intersection.point;
           const normal = intersection.face?.normal.clone();
 
-          // Ensure we are hitting a wall (not inside a hole or weird angle)
-          if (normal && Math.abs(normal.y) < 0.1) { // Wall normal should be horizontal
-            // Transform normal to world space
-            normal.transformDirection(intersection.object.matrixWorld);
+          if (!normal || Math.abs(normal.y) > 0.1) return; // Ensure side face
 
-            // Snap logic
+          // Transform normal to world space
+          normal.transformDirection(intersection.object.matrixWorld);
+
+          // Check if this is a wall network or a single wall
+          let wallId = intersection.object.userData.elementId;
+          const isNetwork = intersection.object.userData.isNetwork;
+
+          if (isNetwork && intersection.object.userData.wallIds) {
+            // It's a network, we need to find which specific wall in the network was hit
+            const wallIds = intersection.object.userData.wallIds as string[];
+            const networkWalls = walls.filter(w => wallIds.includes(w.id));
+
+            // Find closest wall in network to the intersection point
+            let closestWallId: string | null = null;
+            let minDistance = Infinity;
+
+            networkWalls.forEach(wall => {
+              const start = tupleToVec3(wall.start);
+              const end = tupleToVec3(wall.end);
+
+              // Calculate distance from point to wall line segment
+              const wallDir = new Vector3().subVectors(end, start);
+              const wallLength = wallDir.length();
+              wallDir.normalize();
+
+              const toPoint = new Vector3().subVectors(point, start);
+              const projection = toPoint.dot(wallDir);
+              const clampedProjection = Math.max(0, Math.min(wallLength, projection));
+
+              const closestPointOnWall = start.clone().add(wallDir.multiplyScalar(clampedProjection));
+              const distance = point.distanceTo(closestPointOnWall);
+
+              if (distance < minDistance) {
+                minDistance = distance;
+                closestWallId = wall.id;
+              }
+            });
+
+            if (closestWallId) {
+              wallId = closestWallId;
+            }
+          }
+
+          if (wallId) {
             const wall = walls.find(w => w.id === wallId);
-
             if (wall) {
               const wallStart = tupleToVec3(wall.start);
               const wallEnd = tupleToVec3(wall.end);
