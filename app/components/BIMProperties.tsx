@@ -2,6 +2,17 @@
 
 import { useState } from 'react';
 import { BIMModel, BIMElement, BIMWall, BIMDoor, isWall, isDoor } from '../types/bim';
+import {
+  DoorWallSide,
+  DoorSwingDirection,
+  DoorOpeningDirection,
+} from '../types/door-orientation';
+import {
+  flipWallSide,
+  flipHanding,
+  flipOpeningDirection,
+  getOrientationDescription,
+} from '../lib/door-orientation';
 
 interface BIMPropertiesProps {
   model: BIMModel;
@@ -196,6 +207,79 @@ export default function BIMProperties({
                       {selectedElement.parentWallId}
                     </div>
                   </div>
+
+                  {/* Door Orientation Controls */}
+                  {selectedElement.orientation && (
+                    <div className="border-t border-zinc-200 dark:border-zinc-700 pt-3 mt-3">
+                      <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-2">
+                        Door Orientation
+                      </h4>
+
+                      {/* Current Orientation Display */}
+                      <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs">
+                        <div className="font-medium text-blue-900 dark:text-blue-100">
+                          {getOrientationDescription(selectedElement.orientation)}
+                        </div>
+                      </div>
+
+                      {/* Wall Side Control */}
+                      <div className="mb-2">
+                        <label className="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
+                          Wall Side
+                        </label>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() =>
+                              onElementUpdate(selectedElement.id, {
+                                orientation: flipWallSide(selectedElement.orientation!),
+                              } as Partial<BIMDoor>)
+                            }
+                            className="flex-1 px-2 py-1 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded"
+                          >
+                            Flip Side
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Swing Direction (Handing) Control */}
+                      <div className="mb-2">
+                        <label className="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
+                          Handing
+                        </label>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() =>
+                              onElementUpdate(selectedElement.id, {
+                                orientation: flipHanding(selectedElement.orientation!),
+                              } as Partial<BIMDoor>)
+                            }
+                            className="flex-1 px-2 py-1 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded"
+                          >
+                            Flip Handing
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Opening Direction Control */}
+                      <div>
+                        <label className="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
+                          Opening Direction
+                        </label>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() =>
+                              onElementUpdate(selectedElement.id, {
+                                orientation: flipOpeningDirection(selectedElement.orientation!),
+                              } as Partial<BIMDoor>)
+                            }
+                            className="flex-1 px-2 py-1 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded"
+                          >
+                            Flip Direction
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
 
