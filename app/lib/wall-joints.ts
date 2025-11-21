@@ -209,7 +209,7 @@ function calculateButtExtension(
 }
 
 /**
- * Calculate extension for a miter joint
+ * Calculate extension for a miter joint with angle-based clamping
  */
 function calculateMiterExtension(
   wall: BIMWall,
@@ -233,7 +233,22 @@ function calculateMiterExtension(
   const overlapMargin = 0.01; // Minimal overlap for CSG stability
 
   // Calculate exact extension needed to reach the outer corner
-  const extensionDist = ((wall.thickness / 2) / Math.tan(miterAngle)) + overlapMargin;
+  let extensionDist = (wall.thickness / 2) / Math.tan(miterAngle);
+
+  // CRITICAL FIX: Clamp extension based on angle to prevent huge overlaps
+  // Convert angle to degrees for easier understanding
+  const angleDegrees = angle * 180 / Math.PI;
+
+  // For angles outside the "reasonable" range (60-120 degrees), clamp the extension
+  // This prevents the exponential growth of extension distance for acute/obtuse angles
+  if (angleDegrees < 60 || angleDegrees > 120) {
+    // Limit extension to 1.5x wall thickness max for extreme angles
+    const maxExtension = wall.thickness * 1.5;
+    extensionDist = Math.min(Math.abs(extensionDist), maxExtension);
+  }
+
+  // Add minimal overlap margin
+  extensionDist = extensionDist + overlapMargin;
 
   let newStart = start.clone();
   let newEnd = end.clone();
@@ -258,19 +273,41 @@ function calculateMiterExtension(
 
 /**
  * Determine which wall should extend through in a T-joint or X-joint
+ * Priority: Thickness > Length
  */
 function determineExtendingWall(walls: BIMWall[]): BIMWall {
   if (walls.length === 0) return walls[0];
 
-  // Priority rule: Longer wall extends
-  let extendingWall = walls[0];
-  let maxLength = tupleToVec3(walls[0].start).distanceTo(tupleToVec3(walls[0].end));
+  // Priority 1: Thicker wall extends through (structural priority)
+  // This matches professional BIM software behavior (Revit, ArchiCAD)
+  let maxThickness = walls[0].thickness;
+  let thickestWalls = [walls[0]];
 
   for (let i = 1; i < walls.length; i++) {
-    const length = tupleToVec3(walls[i].start).distanceTo(tupleToVec3(walls[i].end));
+    if (Math.abs(walls[i].thickness - maxThickness) < 0.01) {
+      // Same thickness (within tolerance)
+      thickestWalls.push(walls[i]);
+    } else if (walls[i].thickness > maxThickness) {
+      // New thickest wall
+      maxThickness = walls[i].thickness;
+      thickestWalls = [walls[i]];
+    }
+  }
+
+  // If only one wall is thickest, return it
+  if (thickestWalls.length === 1) {
+    return thickestWalls[0];
+  }
+
+  // Priority 2: Among walls with same thickness, longer wall extends
+  let extendingWall = thickestWalls[0];
+  let maxLength = tupleToVec3(thickestWalls[0].start).distanceTo(tupleToVec3(thickestWalls[0].end));
+
+  for (let i = 1; i < thickestWalls.length; i++) {
+    const length = tupleToVec3(thickestWalls[i].start).distanceTo(tupleToVec3(thickestWalls[i].end));
     if (length > maxLength) {
       maxLength = length;
-      extendingWall = walls[i];
+      extendingWall = thickestWalls[i];
     }
   }
 
@@ -317,9 +354,21 @@ export function processWallNetwork(
     // Determine method to use
     let method = jointMethod;
     if (jointMethod === 'auto') {
-      // Auto-select method based on joint type
-      if (jointType === JointType.L_JOINT) {
-        method = 'miter';
+      // Auto-select method based on joint type AND angle
+      if (jointType === JointType.L_JOINT && connectedWalls.length === 2) {
+        // Check the angle between the walls
+        const angle = calculateAngleBetweenWalls(connectedWalls[0], connectedWalls[1], point);
+        const angleDegrees = angle * 180 / Math.PI;
+
+        // Only use miter for "reasonable" angles (30-150 degrees)
+        // For very acute (<30°) or very obtuse (>150°) angles, use butt joint instead
+        if (angleDegrees >= 30 && angleDegrees <= 150) {
+          method = 'miter';
+        } else {
+          // Very shallow or very wide angles: use butt joint for cleaner geometry
+          method = 'butt';
+          console.log(`[Wall Joints] Angle ${angleDegrees.toFixed(1)}° too extreme, using butt joint instead of miter`);
+        }
       } else {
         method = 'butt';
       }

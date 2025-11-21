@@ -80,6 +80,7 @@ export default function BIMCanvas({
   const [isDragging, setIsDragging] = useState(false);
   const mouseDownPosRef = useRef<{ x: number; y: number } | null>(null);
   const [currentAngle, setCurrentAngle] = useState<number | null>(null);
+  const [currentSnapType, setCurrentSnapType] = useState<string | null>(null);
 
   // Door preview state
   const previewGroupRef = useRef<Group | null>(null);
@@ -88,45 +89,136 @@ export default function BIMCanvas({
   const raycasterRef = useRef(new Raycaster());
   const mouseRef = useRef(new Vector2());
 
-  // Snap to grid
+  // Track modifier keys for snap override
+  const [shiftKeyPressed, setShiftKeyPressed] = useState(false);
+
+  // Snap to grid with improved floating-point precision
   const snapToGrid = useCallback(
     (position: Vector3): Vector3 => {
       if (!gridEnabled) return position;
-      // Snap to nearest inch (1/12 foot)
-      const snapIncrement = 1 / 12;
+      // Snap to nearest inch (1/12 foot) with improved precision
+      // Using inverse multiplication to reduce floating-point errors
+      const snapFactor = 12; // Inverse of 1/12
       return new Vector3(
-        Math.round(position.x / snapIncrement) * snapIncrement,
-        Math.round(position.y / snapIncrement) * snapIncrement,
-        Math.round(position.z / snapIncrement) * snapIncrement
+        Math.round(position.x * snapFactor) / snapFactor,
+        Math.round(position.y * snapFactor) / snapFactor,
+        Math.round(position.z * snapFactor) / snapFactor
       );
     },
     [gridEnabled]
   );
 
-  // Snap to wall endpoints
+  // Helper to get screen-space distance between world point and mouse
+  const getScreenSpaceDistance = useCallback(
+    (worldPoint: Vector3, mouseScreenPos: Vector2): number => {
+      if (!camera || !canvasRef.current) return Infinity;
+
+      // Project world point to screen space
+      const screenPos = worldPoint.clone().project(camera);
+
+      // Calculate pixel distance
+      const dx = (screenPos.x - mouseScreenPos.x) * canvasRef.current.width / 2;
+      const dy = (screenPos.y - mouseScreenPos.y) * canvasRef.current.height / 2;
+
+      return Math.sqrt(dx * dx + dy * dy);
+    },
+    [camera]
+  );
+
+  // Snap to wall endpoints with status tracking and screen-space snapping
   const snapToWallEndpoints = useCallback(
-    (position: Vector3): Vector3 => {
-      const snapThreshold = 1.0; // 1 foot snap radius
+    (position: Vector3, mouseScreenPos?: Vector2): { point: Vector3; snapped: boolean; snapType?: string } => {
+      // Skip endpoint snapping if Shift key is held
+      if (shiftKeyPressed) {
+        return { point: position.clone(), snapped: false };
+      }
+
+      // Use screen-space snapping if mouse position is provided
+      const useScreenSpace = mouseScreenPos && camera && canvasRef.current;
+      const snapThresholdPixels = 20; // 20 pixels in screen space
+      const snapThresholdWorld = 0.5; // Reduced from 1.0 foot for tighter control
+
       let closestPoint = position.clone();
-      let minDistance = snapThreshold;
+      let minDistance = useScreenSpace ? snapThresholdPixels : snapThresholdWorld;
+      let didSnap = false;
 
       walls.forEach((wall) => {
         const start = tupleToVec3(wall.start);
         const end = tupleToVec3(wall.end);
 
-        if (position.distanceTo(start) < minDistance) {
-          minDistance = position.distanceTo(start);
-          closestPoint = start;
-        }
-        if (position.distanceTo(end) < minDistance) {
-          minDistance = position.distanceTo(end);
-          closestPoint = end;
+        if (useScreenSpace && mouseScreenPos) {
+          // Screen-space snapping (pixels)
+          const startDist = getScreenSpaceDistance(start, mouseScreenPos);
+          const endDist = getScreenSpaceDistance(end, mouseScreenPos);
+
+          if (startDist < minDistance) {
+            minDistance = startDist;
+            closestPoint = start;
+            didSnap = true;
+          }
+          if (endDist < minDistance) {
+            minDistance = endDist;
+            closestPoint = end;
+            didSnap = true;
+          }
+        } else {
+          // World-space snapping (fallback)
+          if (position.distanceTo(start) < minDistance) {
+            minDistance = position.distanceTo(start);
+            closestPoint = start;
+            didSnap = true;
+          }
+          if (position.distanceTo(end) < minDistance) {
+            minDistance = position.distanceTo(end);
+            closestPoint = end;
+            didSnap = true;
+          }
         }
       });
 
-      return closestPoint;
+      return { point: closestPoint, snapped: didSnap, snapType: didSnap ? 'endpoint' : undefined };
     },
-    [walls]
+    [walls, shiftKeyPressed, camera, getScreenSpaceDistance]
+  );
+
+  // Unified snapping function for consistent wall placement
+  // Used by both preview (mouse move) and actual placement (click)
+  const getSnappedWallEndpoint = useCallback(
+    (rawPoint: Vector3, startPoint: Vector3, applyAngleSnap: boolean, mouseScreenPos?: Vector2): { point: Vector3; snapType?: string } => {
+      // Priority: Endpoint Snap > Grid Snap
+      const endpointSnap = snapToWallEndpoints(rawPoint, mouseScreenPos);
+      let targetPoint = endpointSnap.snapped ? endpointSnap.point : snapToGrid(rawPoint);
+      let snapType = endpointSnap.snapType;
+
+      // If grid snap was used
+      if (!endpointSnap.snapped && gridEnabled) {
+        snapType = 'grid';
+      }
+
+      // Apply angle snapping if requested
+      if (applyAngleSnap) {
+        const direction = new Vector3().subVectors(targetPoint, startPoint);
+        const angle = Math.atan2(direction.z, direction.x);
+
+        // Snap to 45 degree increments
+        const snapAngle = Math.PI / 4; // 45 degrees
+        const snappedAngle = Math.round(angle / snapAngle) * snapAngle;
+
+        // If close to a snap angle (within 5 degrees), snap to it
+        if (Math.abs(angle - snappedAngle) < 0.087) { // ~5 degrees
+          const length = direction.length();
+          targetPoint = new Vector3(
+            startPoint.x + Math.cos(snappedAngle) * length,
+            startPoint.y,
+            startPoint.z + Math.sin(snappedAngle) * length
+          );
+          snapType = snapType ? `${snapType}+angle` : 'angle';
+        }
+      }
+
+      return { point: targetPoint, snapType };
+    },
+    [snapToWallEndpoints, snapToGrid, gridEnabled]
   );
 
   // Get mouse position in 3D space (on ground plane)
@@ -535,21 +627,16 @@ export default function BIMCanvas({
         const point = getGroundIntersection(event);
         if (!point) return;
 
-        // Priority: Endpoint Snap > Grid Snap
-        let snappedPoint = snapToWallEndpoints(point);
-
-        // If no endpoint snap happened (point didn't change), try grid snap
-        if (snappedPoint.equals(point)) {
-          snappedPoint = snapToGrid(point);
-        }
-
         if (!wallStartPoint) {
-          // First click - set start point
+          // First click - set start point (no angle snapping for start point)
+          const endpointSnap = snapToWallEndpoints(point, mouseRef.current);
+          const snappedPoint = endpointSnap.snapped ? endpointSnap.point : snapToGrid(point);
           setWallStartPoint(snappedPoint);
         } else {
-          // Second click - create wall
+          // Second click - create wall with unified snapping (includes angle snap)
           const start = wallStartPoint;
-          const end = snappedPoint;
+          const snapResult = getSnappedWallEndpoint(point, start, true, mouseRef.current);
+          const end = snapResult.point;
 
           // Don't create zero-length walls
           if (start.distanceTo(end) < 0.01) {
@@ -854,6 +941,8 @@ export default function BIMCanvas({
       toolMode,
       wallStartPoint,
       snapToGrid,
+      snapToWallEndpoints,
+      getSnappedWallEndpoint,
       getGroundIntersection,
       onWallCreate,
       onDoorPlace,
@@ -866,8 +955,7 @@ export default function BIMCanvas({
       doorHeight,
       isDragging,
       gridEnabled,
-      updateDoorPreview,
-      snapToWallEndpoints
+      updateDoorPreview
     ]
   );
 
@@ -884,13 +972,13 @@ export default function BIMCanvas({
         const point = getGroundIntersection(event);
         if (!point) return;
 
-        // Priority: Endpoint Snap > Grid Snap
-        let targetPoint = snapToWallEndpoints(point);
+        // Use unified snapping function (same as click handler)
+        const start = wallStartPoint;
+        const snapResult = getSnappedWallEndpoint(point, start, true, mouseRef.current);
+        const end = snapResult.point;
 
-        // If no endpoint snap happened (point didn't change), try grid snap
-        if (targetPoint.equals(point)) {
-          targetPoint = snapToGrid(point);
-        }
+        // Update snap type for visual feedback
+        setCurrentSnapType(snapResult.snapType || null);
 
         // Update preview mesh
         if (wallPreviewMeshRef.current) {
@@ -898,29 +986,9 @@ export default function BIMCanvas({
           wallPreviewMeshRef.current = null;
         }
 
-        // Create ghost mesh
-        const start = wallStartPoint;
-        let end = targetPoint;
-
-        // Calculate angle and snap
+        // Calculate angle for display
         const direction = new Vector3().subVectors(end, start);
-        let angle = Math.atan2(direction.z, direction.x);
-
-        // Snap to 45 degree increments
-        const snapAngle = Math.PI / 4; // 45 degrees
-        const snappedAngle = Math.round(angle / snapAngle) * snapAngle;
-
-        // If close to a snap angle (within 5 degrees), snap to it
-        if (Math.abs(angle - snappedAngle) < 0.087) { // ~5 degrees
-          const length = direction.length();
-          end = new Vector3(
-            start.x + Math.cos(snappedAngle) * length,
-            start.y,
-            start.z + Math.sin(snappedAngle) * length
-          );
-          angle = snappedAngle;
-        }
-
+        const angle = Math.atan2(direction.z, direction.x);
         const length = start.distanceTo(end);
 
         if (length > 0.1) {
@@ -943,13 +1011,12 @@ export default function BIMCanvas({
           scene.add(mesh);
           wallPreviewMeshRef.current = mesh;
 
-          // Update angle indicator (using HTML overlay for simplicity, or we could add a TextSprite)
-          // For now, we'll rely on the visual snap. 
-          // To show the angle text, we can use a simple HTML overlay updated via state or ref.
+          // Update angle indicator
           setCurrentAngle(angle * (180 / Math.PI));
         }
       } else {
         setCurrentAngle(null);
+        setCurrentSnapType(null);
       }
 
       // Door preview
@@ -1062,10 +1129,10 @@ export default function BIMCanvas({
         updateDoorPreview(false);
       }
     },
-    [scene, camera, toolMode, wallStartPoint, snapToGrid, getGroundIntersection, doorWidth, doorHeight, wallThickness, handleCanvasMouseMoveForDrag, walls, gridEnabled, updateDoorPreview, snapToWallEndpoints, wallHeight]
+    [scene, camera, toolMode, wallStartPoint, getSnappedWallEndpoint, getGroundIntersection, doorWidth, doorHeight, wallThickness, handleCanvasMouseMoveForDrag, walls, gridEnabled, updateDoorPreview, wallHeight]
   );
 
-  // Handle escape key to cancel wall placement
+  // Handle keyboard events for escape and Shift key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && wallStartPoint && scene) {
@@ -1080,10 +1147,24 @@ export default function BIMCanvas({
       if (e.key === 'Escape' && toolMode === 'door') {
         updateDoorPreview(false);
       }
+      // Track Shift key for snap override
+      if (e.key === 'Shift') {
+        setShiftKeyPressed(true);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') {
+        setShiftKeyPressed(false);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   }, [wallStartPoint, scene, toolMode, updateDoorPreview]);
 
   // Attach event listeners
@@ -1153,12 +1234,24 @@ export default function BIMCanvas({
       )}
       {toolMode === 'wall' && wallStartPoint && (
         <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg">
-          Click to set wall end point
-          {currentAngle !== null && (
-            <span className="ml-2 font-bold">
-              {Math.abs(currentAngle).toFixed(0)}°
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            <span>Click to set wall end point</span>
+            {currentAngle !== null && (
+              <span className="font-bold">
+                {Math.abs(currentAngle).toFixed(0)}°
+              </span>
+            )}
+            {currentSnapType && (
+              <span className="text-xs bg-green-700 px-2 py-0.5 rounded">
+                {currentSnapType}
+              </span>
+            )}
+            {shiftKeyPressed && (
+              <span className="text-xs bg-yellow-500 px-2 py-0.5 rounded text-black">
+                Snap Override
+              </span>
+            )}
+          </div>
         </div>
       )}
       {toolMode === 'door' && (
