@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BoxGeometry, BufferGeometry, Matrix4, Vector3 } from 'three';
+import { BIMWall, tupleToVec3 } from '../types/bim';
 
 /**
  * Creates a simple box geometry for a wall.
@@ -10,6 +11,73 @@ export function createWallGeometry(
     depth: number
 ): BufferGeometry {
     return new BoxGeometry(width, height, depth);
+}
+
+/**
+ * Represents a network of connected walls that should be unioned together
+ */
+export interface WallNetwork {
+    wallIds: Set<string>;
+    walls: BIMWall[];
+}
+
+/**
+ * Detects if two walls share an endpoint (within tolerance)
+ */
+export function wallsAreConnected(wall1: BIMWall, wall2: BIMWall, tolerance: number = 0.01): boolean {
+    const w1Start = tupleToVec3(wall1.start);
+    const w1End = tupleToVec3(wall1.end);
+    const w2Start = tupleToVec3(wall2.start);
+    const w2End = tupleToVec3(wall2.end);
+
+    // Check all endpoint combinations
+    return (
+        w1Start.distanceTo(w2Start) < tolerance ||
+        w1Start.distanceTo(w2End) < tolerance ||
+        w1End.distanceTo(w2Start) < tolerance ||
+        w1End.distanceTo(w2End) < tolerance
+    );
+}
+
+/**
+ * Builds wall networks by grouping connected walls together
+ * Uses flood-fill algorithm to find connected components
+ */
+export function buildWallNetworks(walls: BIMWall[]): WallNetwork[] {
+    if (walls.length === 0) return [];
+
+    const networks: WallNetwork[] = [];
+    const visited = new Set<string>();
+
+    // Helper function to recursively add connected walls to a network
+    function addConnectedWalls(wall: BIMWall, network: WallNetwork) {
+        if (visited.has(wall.id)) return;
+
+        visited.add(wall.id);
+        network.wallIds.add(wall.id);
+        network.walls.push(wall);
+
+        // Find all walls connected to this one
+        for (const otherWall of walls) {
+            if (!visited.has(otherWall.id) && wallsAreConnected(wall, otherWall)) {
+                addConnectedWalls(otherWall, network);
+            }
+        }
+    }
+
+    // Process each wall
+    for (const wall of walls) {
+        if (!visited.has(wall.id)) {
+            const network: WallNetwork = {
+                wallIds: new Set(),
+                walls: []
+            };
+            addConnectedWalls(wall, network);
+            networks.push(network);
+        }
+    }
+
+    return networks;
 }
 
 /**
